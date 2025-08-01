@@ -20,7 +20,6 @@
 #include "colors&tonescales.h" // Color definitions and tone scales
 #include "wavefx.h"  // Header file for this sketch
 
-
 extern unsigned long _heap_start;
 extern unsigned long _heap_end;
 extern char *__brkval;
@@ -29,42 +28,50 @@ int freeram() {
   return (char *)&_heap_end - __brkval;
 }
 
-
 using namespace fl;        // Use the FastLED namespace for convenience
 
 // Array to hold all LED color values - one CRGB struct per LED
 CRGB leds[NUM_LEDS];
 
+
 // Create mappings between 1D array positions and 2D x,y coordinates
-XYMap xyMap(WIDTH, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
-XYMap xyRect(WIDTH, HEIGHT, false);         // For the wave simulation (always rectangular grid)
+XYMap xyMap(WIDTH , HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
+XYMap xyRect(WIDTH , HEIGHT, false);         // For the wave simulation (always rectangular grid)
+
+// Create a blender that will combine the two wave layers
+Blend2d fxBlend(xyMap);
 
 // Create default configuration for the wave layers
 WaveFx::Args CreateDefWaveArgs() {
     WaveFx::Args out;
     out.factor = SUPER_SAMPLE_MODE;  // Use the defined super sampling mode
-
     out.half_duplex = true;                    // Only positive waves (no negative values)
     out.auto_updates = true;                   // Automatically update the simulation each frame
     out.x_cyclical = true;                     // Enable horizontal wrapping (cylindrical effect)
     return out;
 }
 
+// Wave effects for bigWave
+WaveFx bigWaveLower(xyRect, CreateDefWaveArgs());
+WaveFx bigWaveUpper(xyRect, CreateDefWaveArgs());            
+
+
 // Create a player data structure to hold wave layers and user interaction data
 struct PlayerData {
     WaveFx waveLower;
     WaveFx waveUpper;
-    WaveFx bigWaveLower;
-    WaveFx bigWaveUpper;            
-    TimeRamp pointTransition;
+    TimeRamp bigWaveTransition;  // Transition for the big wave effect
+
+ 
     int playerId;
     int analogPin;  // Pin for analog input (e.g., potentiometer)
-    int buttonPin;  // Pin for the button to trigger waves
-    int bigButtonPin;  // Pin for the button to trigger big waves
-    int buttonPressed;
-    int buttonNote;
-    int bigButtonPressed;
-    int bigButtonNote;
+    int trigger1Pin;  // Pin for the button to trigger waves
+    int trigger2Pin;  // Pin for the button to trigger big waves
+    int trigger1Active;
+    int trigger2Active;
+    int trigger1Note;
+    int trigger2Note;
+    int triggerBigWaveActive;
     int * tonescale = nullptr;  // Pointer to the current tone scale (if needed)
     int tonescaleSize = 0;
     
@@ -72,22 +79,20 @@ struct PlayerData {
     PlayerData(const XYMap& xyRect, const WaveFx::Args& argsLower, const WaveFx::Args& argsUpper, int id, int pinAnalog, int pin, int pinBig )
         : waveLower(xyRect, argsLower),
           waveUpper(xyRect, argsUpper),
-          bigWaveLower(xyRect, argsLower),
-          bigWaveUpper(xyRect, argsUpper),
-          pointTransition(70, 0, 0),
+          bigWaveTransition (70, 0, 0),  
           playerId(id),
           analogPin(pinAnalog),
-          buttonPin(pin),
-          bigButtonPin(pinBig),
-          buttonPressed(0),
-          buttonNote(0),
-          bigButtonPressed(0),
-          bigButtonNote(0)
+          trigger1Pin(pin),
+          trigger2Pin(pinBig),
+          trigger1Active(0),
+          trigger2Active(0),
+          trigger1Note(0),
+          trigger2Note(0),
+          triggerBigWaveActive(0) 
     {}
 };
 
-const int NUM_PLAYERS = 5;
-PlayerData playerArray[NUM_PLAYERS] = {
+PlayerData playerArray[NUMBER_OF_PLAYERS] = {
     { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
     { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
     { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, 15},
@@ -95,12 +100,9 @@ PlayerData playerArray[NUM_PLAYERS] = {
     { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 4, A15, 38, 37 }
 };
 
-// Create a blender that will combine the two wave layers
-Blend2d fxBlend(xyMap);
-
 
 // Create a ripple effect at a random position within the central area of the display
-void triggerWave(int pos, int playerId) {
+void triggerWave(int pos, PlayerData * player) {
     // Define a margin percentage to keep ripples away from the edges
     float perc = .15f;
     
@@ -114,10 +116,18 @@ void triggerWave(int pos, int playerId) {
     int x = random(min_x, max_x);
     int y = pos==-1 ? random(min_y, max_y) : pos;
     
+    #ifdef TEST_MODE
+      // In test mode, use a fixed position for small led matrix
+      int xOffset =0;
+    #else
+      int xOffset = playerId * WIDTH;  // Offset for the player ID to separate wave layers
+    #endif
+
+
     // Set a wave peak at this position in both wave layers
     // The value 1.0 represents the maximum height of the wave
-    playerArray[playerId].waveLower.setf(x, y, 1);  // Create ripple in lower layer
-    playerArray[playerId].waveUpper.setf(x, y, 1);  // Create ripple in upper layer
+    player->waveLower.setf(x + xOffset, y, 1);  // Create ripple in lower layer
+    player->waveUpper.setf(x + xOffset, y, 1);  // Create ripple in upper layer
     // Serial.printf("Triggering ripple at (%d, %d)\n", x, y);
 }
 
@@ -125,15 +135,23 @@ void triggerWave(int pos, int playerId) {
 void applyBigWave(uint32_t now, bool button_active, PlayerData * player) {
     // If the button is active, start/restart the animation
     if (button_active) {
-        player->pointTransition.trigger(now, 70, 0, 0);
+        player->bigWaveTransition.trigger(now, 70, 0, 0);
     }
 
     // If the animation isn't currently active, exit early
-    if (!player->pointTransition.isActive(now)) {
+    if (!player->bigWaveTransition.isActive(now)) {
         // no need to draw
         return;
     }
     
+    #ifdef TEST_MODE
+      // In test mode, use a fixed position for small led matrix
+      int xOffset =0;
+    #else
+      int xOffset = playerId * WIDTH;  // Offset for the player ID to separate wave layers
+    #endif
+
+
     // Find the center of the display
     int mid_x = WIDTH / 2;
     int mid_y = HEIGHT / 2;
@@ -148,8 +166,8 @@ void applyBigWave(uint32_t now, bool button_active, PlayerData * player) {
     int end_y = mid_y + amount;    // Bottommost point
     
     // Get the current animation progress (0-255)
-    int curr_alpha = player->pointTransition.update8(now);
-    
+    int curr_alpha = player->bigWaveTransition.update8(now);
+
     // Map the animation progress to the four points of the expanding cross
     // As curr_alpha increases from 0 to 255, these points move from center to edges
     int left_x = map(curr_alpha, 0, 255, mid_x, start_x);  // Center to left
@@ -172,79 +190,103 @@ void applyBigWave(uint32_t now, bool button_active, PlayerData * player) {
     
     // Left-moving horizontal line
     for (int x = left_x - span; x < left_x + span; x++) {
-        player->bigWaveLower.addf(x, mid_y, valuef);  // Add to lower layer
-        player->bigWaveUpper.addf(x, mid_y, valuef);  // Add to upper layer
+        bigWaveLower.addf(x + xOffset, mid_y, valuef);  // Add to lower layer
+        bigWaveUpper.addf(x + xOffset, mid_y, valuef);  // Add to upper layer
     }
 
     // Right-moving horizontal line
     for (int x = right_x - span; x < right_x + span; x++) {
-        player->bigWaveLower.addf(x, mid_y, valuef);
-        player->bigWaveUpper.addf(x, mid_y, valuef);
+        bigWaveLower.addf(x + xOffset, mid_y, valuef);
+        bigWaveUpper.addf(x + xOffset, mid_y, valuef);
     }
 
     // Downward-moving vertical line
     for (int y = down_y - span; y < down_y + span; y++) {
-        player->bigWaveLower.addf(mid_x, y, valuef);
-        player->bigWaveUpper.addf(mid_x, y, valuef);
+        bigWaveLower.addf(mid_x + xOffset, y, valuef);
+        bigWaveUpper.addf(mid_x + xOffset, y, valuef);
     }
 
     // Upward-moving vertical line
     for (int y = up_y - span; y < up_y + span; y++) {
-        player->bigWaveLower.addf(mid_x, y, valuef);
-        player->bigWaveUpper.addf(mid_x, y, valuef);
+        bigWaveLower.addf(mid_x + xOffset, y, valuef);
+        bigWaveUpper.addf(mid_x + xOffset, y, valuef);
     }
 }
 
+void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
+    // Set the speed and dampening for one wave layer
+    waveLower.setSpeed(speed);
+    waveLower.setDampening(dampening);
+}
 
 void processPlayers(PlayerData * player) {
 
-    int buttonState = digitalRead(player->buttonPin);
-    int bigButtonState = digitalRead(player->bigButtonPin);
+    int trigger1State = digitalRead(player->trigger1Pin);
+    int trigger2State = digitalRead(player->trigger2Pin);
     int noteControlStickValue = analogRead(player->analogPin);
 
-    if ((buttonState == LOW) && (player->buttonPressed == 0)) {
-        player->buttonPressed = 1;
+    if ((trigger1State == LOW) && (player->trigger1Active == 0)) {
+        player->trigger1Active = 1;
+        if (JOYSTICK_MODE == 0) noteControlStickValue = random (0,512);  // if no joystick attached, use random value in bottom half!
+        // Set wave parameters for longer wave duration  
+        setWaveParameters(player->waveLower, 0.005f, 12.0f);        // (speed, dampening)
+        setWaveParameters(player->waveUpper, 0.003f, 12.0f);   
+        triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
 
-        // Map analog input to MIDI note
-        player->buttonNote = player->tonescaleSize > 0 
+        // Map the analog input to a MIDI note in the defined scale
+        player->trigger1Note = player->tonescaleSize > 0 
             ? 60 + player->tonescale[map (noteControlStickValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
             : map (noteControlStickValue, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
 
-        player->waveLower.setSpeed(0.005f);         // Wave propagation speed
-        player->waveLower.setDampening(12.0f);      // How quickly waves lose energy
-        player->waveUpper.setSpeed(0.003f);         
-        player->waveUpper.setDampening(12.0f);      
-        triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player->playerId);  // create a wave at the position based on analog input
-        usbMIDI.sendNoteOn(player->buttonNote, MIDINOTE_VELOCITY, player->playerId+1);     // channel = userid+1
+        Serial.printf("Triggering player %d bottom half wave at analog value %d, mapped to note %d\n", player->playerId, noteControlStickValue, player->trigger1Note);
+        usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1);       // MIDI channel = player id + 1
     }   
-    else if ((buttonState == HIGH)  && (player->buttonPressed == 1)) {
-        player->buttonPressed = 0;           // Reset button pressed state
-        player->waveLower.setSpeed(0.005f);  
-        player->waveLower.setDampening(10.0f);
-        player->waveUpper.setSpeed(0.003f);
-        player->waveUpper.setDampening(8.0f);
-        usbMIDI.sendNoteOff(player->buttonNote, MIDINOTE_VELOCITY, player->playerId+1); 
+    else if ((trigger1State == HIGH)  && (player->trigger1Active == 1)) {
+        player->trigger1Active = 0;
+        // Set wave parameters for faster wave decay
+        setWaveParameters(player->waveLower, 0.005f, 10.0f);
+        setWaveParameters(player->waveUpper, 0.003f, 8.0f);
+        usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1); 
     } 
 
-    if ((bigButtonState == LOW) && (player->bigButtonPressed == 0)) {  
-        player->bigButtonPressed = 1;
-        player->bigButtonNote = 50;  // Fixed MIDI note for big button
-        player->bigWaveLower.setSpeed(0.007f);
-        player->bigWaveLower.setDampening(10.0f);
-        player->bigWaveUpper.setSpeed(0.004f);
-        player->bigWaveUpper.setDampening(10.0f);
-        usbMIDI.sendNoteOn(player->bigButtonNote, MIDINOTE_VELOCITY, player->playerId+2); 
+    if ((trigger2State == LOW) && (player->trigger2Active == 0)) {  
+        player->trigger2Active = 1;
+        if (JOYSTICK_MODE == 0) noteControlStickValue = random (512,1023);  // if no joystick attached, use random value in top half!
+        // Set wave parameters for longer wave duration  
+        setWaveParameters(player->waveLower, 0.005f, 12.0f);        // (speed, dampening)
+        setWaveParameters(player->waveUpper, 0.003f, 12.0f);   
+        triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
+
+        // Map the analog input to a MIDI note in the defined scale
+        player->trigger2Note = player->tonescaleSize > 0 
+            ? 60 + player->tonescale[map (noteControlStickValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
+            : map (noteControlStickValue, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
+
+        Serial.printf("Triggering Player %d top half wave at analog value %d, mapped to note %d\n", player->playerId, noteControlStickValue, player->trigger2Note);
+        usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1);  // MIDI channel = player id + 1
     }
-    else if ((bigButtonState == HIGH) && (player->bigButtonPressed == 1)) {
-        player->bigButtonPressed = 0;  // Reset fancy button state
-        player->bigWaveLower.setSpeed(0.020f);
-        player->bigWaveLower.setDampening(8.0f);
-        player->bigWaveUpper.setSpeed(0.018f);
-        player->bigWaveUpper.setDampening(8.0f);
-        usbMIDI.sendNoteOff(player->bigButtonNote, MIDINOTE_VELOCITY, player->playerId+2); 
+    else if ((trigger2State == HIGH) && (player->trigger2Active == 1)) {
+        player->trigger2Active = 0;  // Reset fancy button state
+        // Set wave parameters for faster wave decay
+        setWaveParameters(player->waveLower, 0.005f, 10.0f);
+        setWaveParameters(player->waveUpper, 0.003f, 8.0f);
+        usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1); 
     }
 
-    applyBigWave(millis(), player->bigButtonPressed == 1, player);  // Trigger the fancy effect
+    /* 
+
+    trigger big wave effect
+        bigNote = 50;  // Fixed MIDI note for big wave
+        setWaveParameters(bigWaveLower, 0.007f, 10.0f);
+        setWaveParameters(bigWaveUpper, 0.004f, 10.0f);
+        usbMIDI.sendNoteOn(bigNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
+
+        setWaveParameters(bigWaveLower, 0.020f, 8.0f);
+        setWaveParameters(bigWaveUpper, 0.018f, 8.0f);
+        usbMIDI.sendNoteOff(bigNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
+
+        applyBigWave(millis(), triggerBigWaveActive, player);  // Trigger the bigwave effect
+    */
 }
 
 // Setup function to initialize the wave effects and LED strip
@@ -257,12 +299,18 @@ void wavefx_setup() {
     // screenmap.setDiameter(2);  // Set the size of the LEDs in the visualization
 
     // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
-    FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN>(leds, NUM_LEDS).setScreenMap(screenmap);
+    // TBD: verify correct format for Teensy4.1 5 parallel stripes
+    CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER);
+    /*  CLEDController& c2 = FastLED.addLeds<WS2812, 9, GRB>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+        CLEDController& c3 = FastLED.addLeds<WS2812, 10, GRB>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+        CLEDController& c4 = FastLED.addLeds<WS2812, 11, GRB>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+        CLEDController& c5 = FastLED.addLeds<WS2812, 12, GRB>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    */
+
     FastLED.setBrightness(OVERALL_BRIGHTNESS);  // Set the overall brightness (0-255)
 
     // Initialize the color palettes for the wave layers
     WaveCrgbMapPtr palYellowRed, palDarkGreen, palDarkBlue, palYellowWhite, palPurpleWhite;  // Color palettes for the wave layers
-
     palYellowRed = fl::make_shared<WaveCrgbGradientMap>(yellowRedGradientPal);
     palPurpleWhite = fl::make_shared<WaveCrgbGradientMap>(purpleWhiteGradientPal);
     palDarkBlue = fl::make_shared<WaveCrgbGradientMap>(darkBlueGradientPal);
@@ -280,79 +328,72 @@ void wavefx_setup() {
         .blur_passes = 1,            // Blur passes for upper layer
     };
 
-    for (int i = 0; i < NUM_PLAYERS; i++) {
+    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
+
         PlayerData& p = playerArray[i]; // Use a reference for clarity and efficiency
-
-        pinMode (p.buttonPin, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
-        pinMode (p.bigButtonPin, INPUT_PULLUP); // Set big button pin as input with pull-up resistor
-
         p.tonescaleSize=0;
+        pinMode (p.trigger1Pin, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
+        pinMode (p.trigger2Pin, INPUT_PULLUP); // Set big button pin as input with pull-up resistor
+
+        p.tonescale = (int *)tonescalePentatonicMajor;
+        p.tonescaleSize = sizeof(tonescalePentatonicMajor) / sizeof(tonescalePentatonicMajor[0]);
 
         p.waveLower.setCrgbMap(palDarkBlue);
         p.waveLower.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
-
         p.waveUpper.setCrgbMap(palPurpleWhite);
         p.waveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
 
-        p.bigWaveLower.setCrgbMap(palYellowRed);
-        p.bigWaveLower.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
-
-        p.bigWaveUpper.setCrgbMap(palYellowRed);
-        p.bigWaveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
-
         // Add wave layers to the blender (order matters - lower layer is added first (background))
-        fxBlend.add(p.bigWaveLower);
-        fxBlend.add(p.bigWaveUpper);
         fxBlend.add(p.waveLower);
         fxBlend.add(p.waveUpper);
 
         // Apply the layer-specific blur parameters
         fxBlend.setParams(p.waveLower, lower_params);
         fxBlend.setParams(p.waveUpper, upper_params);
-        fxBlend.setParams(p.bigWaveLower, lower_params);
-        fxBlend.setParams(p.bigWaveUpper, upper_params);
     }
 
+    bigWaveLower.setCrgbMap(palYellowRed);
+    bigWaveLower.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
+    bigWaveUpper.setCrgbMap(palYellowRed);
+    bigWaveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
 
+    fxBlend.add(bigWaveLower);  // Add the big wave layers to the blender
+    fxBlend.add(bigWaveUpper);
+    fxBlend.setParams(bigWaveLower, lower_params);
+    fxBlend.setParams(bigWaveUpper, upper_params);
+
+    // Now set player-specific color palettes and tone scales
     playerArray[1].waveLower.setCrgbMap(palDarkGreen);
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
-    playerArray[1].tonescale = (int *)tonescalePentatonicMajor;
-    playerArray[1].tonescaleSize = sizeof(tonescalePentatonicMajor) / sizeof(tonescalePentatonicMajor[0]);
+
 
     // Apply global blur settings to the blender
     fxBlend.setGlobalBlurAmount(0);       // Overall blur strength
     fxBlend.setGlobalBlurPasses(1);       // Number of blur passes
-
 }
 
 
 void wavefx_loop() {
-    // The main program loop that runs continuously
     uint32_t now = millis();
 
     // Apply current settings and get button states for all players
-    for (int i = 0; i < NUM_PLAYERS; i++) {
+    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
         processPlayers(&playerArray[i]);
     }   
 
-    // Create a drawing context with the current time and LED array
-    Fx::DrawContext ctx(now, leds);
-    
-    // Draw the blended result of both wave layers to the LED array
-    fxBlend.draw(ctx);
-    
-    // Send the color data to the actual LEDs
-    FastLED.show();
+    Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
+    fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
+    FastLED.show();         // Send the color data to the actual LEDs
 
     static int frameCount = 0;  // Frame counter for performance monitoring
+    static int frameTime = 0;   // Time taken for the last frame
     frameCount++;
-    static int frameTime = 0;  // Time taken for the last frame
 
     // If debug output is enabled, print the frame rate and free RAM every second
     #ifdef CREATE_DEBUG_OUTPUT
         if (millis() - frameTime >= 1000) {
             // Every second, print the frame rate
-            Serial.printf("FPS: %d, Free Ram = %d\n", frameCount, freeram());
+            Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);
             frameCount = 0;  // Reset frame counter
             frameTime = millis();  // Update last frame time
         }
@@ -360,7 +401,38 @@ void wavefx_loop() {
 }
 
 
-    // instrument = (instrument + 1) % 10; // Cycle through instruments 0-9
-    // usbMIDI.sendProgramChange(instrument, 1);
-    // usbMIDI.sendControlChange(0, instrument, 1);  // Bank Select MSB = 1
-    // usbMIDI.sendControlChange(32, 0, 1); // Bank Select LSB = 0
+// FastLED.addLeds<NUM_PLAYERS, WS2811, 10>(leds,NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+/*
+    for (int i=0; i< NUM_PLAYERS; i++) {
+        switch (i) {
+            case 0: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+0>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
+            case 1: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+1>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
+            case 2: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+2>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
+            case 3: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+3>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
+            case 4: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+4>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
+        }
+    }
+
+*/
+
+/*
+    static int xPos=0, yPos=0;
+    leds[xyMap(xPos, yPos) ] = CRGB::Red;
+    FastLED.show();
+    xPos++;
+    if (xPos >= WIDTH) {
+        xPos = 0;  // Reset x position when reaching the end of the row
+        yPos++;
+        if (yPos >= HEIGHT) {
+            yPos = 0;  // Reset y position when reaching the end of the column
+        }
+    }
+    delay(100);  // Delay to control the speed of the animation
+*/
+
+/*
+     instrument = (instrument + 1) % 10; // Cycle through instruments 0-9
+     usbMIDI.sendProgramChange(instrument, 1);
+     usbMIDI.sendControlChange(0, instrument, 1);  // Bank Select MSB = 1
+     usbMIDI.sendControlChange(32, 0, 1); // Bank Select LSB = 0
+*/

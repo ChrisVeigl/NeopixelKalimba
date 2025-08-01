@@ -16,6 +16,8 @@ const int tonescaleMinorMelodic[]    = {0, 2, 3, 5, 7, 9, 11, 12, 14, 15, 17, 19
 const int tonescalePentatonicMajor[] = {0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26};  // Pentatonic major scale extended to 12 notes
 const int tonescalePentatonicMinor[] = {0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24, 27};  // Pentatonic minor scale extended to 12 notes
 const int tonescaleBlues[]           = {0, 3, 5, 6, 7, 10, 12, 15, 17, 18, 19, 22};   // Blues scale extended to 12 notes
+const int tonescaleWholeTone[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22}; // Whole tone scale (harmonic combinations)
+
 
 // Color palettes define the gradient of colors used for the wave effects
 // Each entry has the format: position (0-255), R, G, B
