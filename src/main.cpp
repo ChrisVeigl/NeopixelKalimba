@@ -28,6 +28,8 @@ void setup() {
     Serial.begin(115200);
     while(!Serial && timeout_end > millis()) {}  // wait until the connection to the PC is established
     delay (1000);
+    Serial1.begin(115200);
+
     #ifndef ONLY_SIGNAL_TRACE_DISPLAY
         wavefx_setup();  // Initialize the wave effects and LED strip
         Serial.println("Welcome to the Neopixel Kalimba!");

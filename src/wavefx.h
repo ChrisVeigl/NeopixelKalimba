@@ -20,7 +20,10 @@
 #define TEST_MODE               // define to test all players with a single 8x40 led matrix
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 
-#define JOYSTICK_MODE 0        // 0 = random, 1 = analog stick
+#define BIGWAVE_TIME_THRESHOLD 100  // Time in milliseconds to consider two wave triggers as "close enough" for big waves
+#define EXTERNAL_TRIGGER_ACTIVE_PERIOD 2000 // Time in milliseconds to override buttons with external triggers (from Serial1)
+
+#define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
 
 // Important: super sampling consumes more RAM and CPU! (2X or 4X result in out-of-memory crashes if full 40x50 matrix is used!!
 #define SUPER_SAMPLE_MODE SuperSample::SUPER_SAMPLE_NONE;  // SUPER_SAMPLE_2X or SUPER_SAMPLE_4X to create smoother waves
