@@ -119,9 +119,9 @@ void playIdleAnimation() {
     if (millis() - lastUpdateTime > 10) {  // Update every 100 ms
         lastUpdateTime = millis();  // Update the timestamp
         
-        colorIndex = (colorIndex + 1) % 100;
-        int c = colorIndex < 50 ? colorIndex * 5 : (100 - colorIndex) * 5;  // Create a gradient effect
-        leds[xyMap(xPos, yPos)] = CRGB(c, c, c*2);
+        colorIndex = (colorIndex + 1) % 500;
+        int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
+        leds[xyMap(xPos, yPos)] = CRGB(c/10, c/15, c/5);
         xPos++;
         if (xPos >= WIDTH) {
             xPos = 0;  // Reset x position when reaching the end of the row
