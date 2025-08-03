@@ -20,7 +20,7 @@
 #define TEST_MODE               // define to test all players with a single 8x40 led matrix
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 
-#define BIGWAVE_TIME_THRESHOLD 500  // Time in milliseconds to consider two wave triggers as "close enough" for big waves
+#define BIGWAVE_TIME_THRESHOLD 20  // Time in milliseconds to consider two wave triggers as "close enough" for big waves
 #define EXTERNAL_TRIGGER_ACTIVE_PERIOD 2000 // Time in milliseconds to override buttons with external triggers (from Serial1)
 
 #define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
