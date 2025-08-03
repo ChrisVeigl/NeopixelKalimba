@@ -391,12 +391,8 @@ void wavefx_loop() {
         for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
 
             PlayerData * player2 = &playerArray[j];
-            if (player1->bigWaveTransition.isActive(now) || player2->bigWaveTransition.isActive(now)
-                || (player1->trigger1Timestamp==0 || player2->trigger1Timestamp==0)) continue;
-
-            // Check if the timestamps of trigger1 or trigger2 are close enough to trigger a big wave
-            if (abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD ||
-                abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD) {
+            if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
+                (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
 
                 // Trigger big wave transition if timestamps are close
                 player1->bigWaveTransition.trigger(now, 70, 0, 0);
@@ -404,7 +400,7 @@ void wavefx_loop() {
                 // reset the trigger timestamps to avoid re-triggering
                 player1->trigger1Timestamp=player2->trigger1Timestamp=player1->trigger2Timestamp=player2->trigger2Timestamp=0;  
 
-                usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
+                usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // in case note is still on, turn it off
                 bigwaveNote= 60 + player1->tonescale [bigWaveNoteIndex++ % 7];
                 usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
                 bigWaveRunTime = now;  // Remember the time when the big wave was triggered
