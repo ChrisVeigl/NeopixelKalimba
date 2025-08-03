@@ -12,16 +12,25 @@
     
 */
 
+// #define DIRECT_PIEZO_MODE          // use less sensitive parameters for piezo sensors without epoxy coating!
+// #define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
+#define OUTPUT_SIGNAL_TRACES 1     // for testing: display signal traces (serial plotter)
 
 #define NUMBER_OF_PLAYERS 5
-#define ONLY_CHANNEL_N 2     // for testing: set to 0 for sending all channels!
-#define OUTPUT_SIGNAL_TRACES 1  // for testing: display signal traces (serial plotter)
 
-#define PIEZO_THRESHOLD 250
-#define PIEZO_IMPACT_VAL 20
-#define PIEZO_TRIGGER_MAXVALUE 3500
-#define PIEZO_DECAY 5
-#define SAMPLING_PERIOD 1
+#ifdef DIRECT_PIEZO_MODE
+  #define PIEZO_THRESHOLD 250
+  #define PIEZO_IMPACT_VAL 20
+  #define PIEZO_TRIGGER_MAXVALUE 3500
+  #define PIEZO_DECAY 5
+#else
+  #define PIEZO_THRESHOLD 15
+  #define PIEZO_IMPACT_VAL 20
+  #define PIEZO_TRIGGER_MAXVALUE 3500
+  #define PIEZO_DECAY 5
+#endif 
+
+#define SAMPLING_PERIOD 1     // delay for sampling loop (in milliseconds)
 #define REPORTING_PERIOD 10
 
 int piezoTrigger[NUMBER_OF_PLAYERS * 2]={0};
@@ -36,6 +45,10 @@ void setup() {
 }
 
 void loop() {
+  #ifdef ONLY_SHOW_CHANNEL_TRACE
+    showChannelTrace(ONLY_SHOW_CHANNEL_TRACE);  return;   // for testing: only show raw values of one channel!
+  #endif
+  
   static uint32_t reportingTimestamp=0;
   int reportNow=0;
   uint8_t * actTriggerGroup=0;
@@ -48,8 +61,6 @@ void loop() {
   for (int i=0; i < NUMBER_OF_PLAYERS * 2; i++) {
     int piezoVal=analogRead(A0+i);
     
-    if ((ONLY_CHANNEL_N) && (i!=ONLY_CHANNEL_N-1)) continue;  // bypass unused channels
-
     if (i%2) actTriggerGroup = &trigger2Group; else actTriggerGroup = &trigger1Group;
     
     if ((piezoVal > PIEZO_THRESHOLD) && (piezoTrigger[i] < PIEZO_TRIGGER_MAXVALUE))
@@ -83,4 +94,18 @@ void loop() {
     }
   }
   delay(SAMPLING_PERIOD);
+}
+
+void showChannelTrace(int c) {
+  static int sum=0;
+  static int count=0;
+  int val=analogRead(c);
+  if (val<3) val=0;
+  sum+=val;
+  if (count++ >= 100) {
+    Serial.println(sum);
+    count=0;
+    sum=0;
+  }
+  delayMicroseconds(200);
 }
