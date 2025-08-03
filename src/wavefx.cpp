@@ -37,10 +37,15 @@ uint8_t trigger1Flags, trigger2Flags = 0;  // Flags to indicate if a trigger eve
 uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamps for last trigger updates (from Serial1)
 
 // Create mappings between 1D array positions and 2D x,y coordinates
-XYMap xyMap(WIDTH , HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
-XYMap xyRect(WIDTH , HEIGHT, false);         // For the wave simulation (always rectangular grid)
+#ifdef USE_BIG_MATRIX
+    XYMap xyMap(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
+    XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, false);         // For the wave simulation (always rectangular grid)
+#else
+    XYMap xyMap(WIDTH, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
+    XYMap xyRect(WIDTH, HEIGHT, false);         // For the wave simulation (always rectangular grid)
+#endif
 
-// Create a blender that will combine the two wave layers
+// Create a blender that will combine the wave effecsts of all players
 Blend2d fxBlend(xyMap);
 
 // Create default configuration for the wave layers
@@ -59,14 +64,13 @@ WaveFx bigWaveUpper(xyRect, CreateDefWaveArgs());
 int bigwaveNote = 0;  // MIDI note for big wave effect, will be set later based on player tone scale
 uint32_t bigWaveRunTime = 0;  
 int bigWaveNoteIndex = 0;  // Index for the "travelling" big wave note in the tone scale
-
+uint32_t lastUserActivity=0;  // Timestamp of the last user interaction (button press, wave trigger, etc.)
 
 // Create a player data structure to hold wave layers and user interaction data
 struct PlayerData {
     WaveFx waveLower;
     WaveFx waveUpper;
 
- 
     int playerId;
     int analogPin;  // Pin for analog input (e.g., potentiometer)
     int trigger1Pin;  // Pin for the button to trigger waves
@@ -107,6 +111,30 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
 };
 
 
+void playIdleAnimation() {
+    static int xPos=0, yPos=0;
+    static uint32_t lastUpdateTime = 0;  // Timestamp of the last update
+    static int colorIndex = 0;  // Current color index
+
+    if (millis() - lastUpdateTime > 10) {  // Update every 100 ms
+        lastUpdateTime = millis();  // Update the timestamp
+        
+        colorIndex = (colorIndex + 1) % 100;
+        int c = colorIndex < 50 ? colorIndex * 5 : (100 - colorIndex) * 5;  // Create a gradient effect
+        leds[xyMap(xPos, yPos)] = CRGB(c, c, c*2);
+        xPos++;
+        if (xPos >= WIDTH) {
+            xPos = 0;  // Reset x position when reaching the end of the row
+            yPos++;
+            if (yPos >= HEIGHT) {
+                yPos = 0;  // Reset y position when reaching the end of the column
+                
+            }
+        }
+    }
+}
+
+
 // Create a ripple effect at a random position within the central area of the display
 void triggerWave(int pos, PlayerData * player) {
     // Define a margin percentage to keep ripples away from the edges
@@ -122,11 +150,11 @@ void triggerWave(int pos, PlayerData * player) {
     int x = random(min_x, max_x);
     int y = pos==-1 ? random(min_y, max_y) : pos;
     
-    #ifdef TEST_MODE
+    #ifdef USE_BIG_MATRIX
+      int xOffset = playerId * WIDTH;  // Offset for the player ID to separate wave layers
+    #else
       // In test mode, use a fixed position for small led matrix
       int xOffset =0;
-    #else
-      int xOffset = playerId * WIDTH;  // Offset for the player ID to separate wave layers
     #endif
 
     // Set a wave peak at this position in both wave layers (1.0 represents the maximum height of the wave)
@@ -137,12 +165,12 @@ void triggerWave(int pos, PlayerData * player) {
 
 // Create a fancy cross-shaped effect that expands from the center
 void applyBigWave(uint32_t now, PlayerData * player) {
-    
-    #ifdef TEST_MODE
+
+    #ifdef USE_BIG_MATRIX
+      int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
+    #else
       // In test mode, use a fixed position for small led matrix
       int xOffset =0;
-    #else
-      int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
     #endif
 
     // Find the center of the display
@@ -225,6 +253,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
     int noteControlStickValue = analogRead(player->analogPin);
 
     if ((trigger1State == LOW) && (player->trigger1Active == 0)) {
+        lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger1Timestamp = now;  // remember the timestamp for trigger1
         player->trigger1Active = 1;
         if (player->joystickMode == 0) noteControlStickValue = random (0,512);  // if no joystick attached, use random value in bottom half!
@@ -250,6 +279,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
     } 
 
     if ((trigger2State == LOW) && (player->trigger2Active == 0)) {
+        lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
         if (player->joystickMode == 0) noteControlStickValue = random (512,1023);  // if no joystick attached, use random value in top half!
@@ -278,30 +308,34 @@ void processPlayers(uint32_t now,PlayerData * player) {
 // Setup function to initialize the wave effects and LED strip
 void wavefx_setup() {
 
-    pinMode (USER_BUTTON_PIN, INPUT_PULLUP);
     Serial.print("Initial Free Ram = "); Serial.println(freeram());
+    pinMode (USER_POTI_GND_PIN, OUTPUT);
+    digitalWrite(USER_POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
 
-    auto screenmap = xyMap.toScreenMap();
-    // screenmap.setDiameter(2);  // Set the size of the LEDs in the visualization
 
     // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
     // TBD: verify correct format for Teensy4.1 5 parallel stripes
-    CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER);
-    /*  CLEDController& c2 = FastLED.addLeds<WS2812, 9, GRB>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-        CLEDController& c3 = FastLED.addLeds<WS2812, 10, GRB>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-        CLEDController& c4 = FastLED.addLeds<WS2812, 11, GRB>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-        CLEDController& c5 = FastLED.addLeds<WS2812, 12, GRB>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    */
+    // see: https://github.com/FastLED/FastLED/blob/master/examples/TeensyMassiveParallel/TeensyMassiveParallel.ino
 
-    FastLED.setBrightness(OVERALL_BRIGHTNESS);  // Set the overall brightness (0-255)
+    auto screenmap = xyMap.toScreenMap();
+    //CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 9, GRB>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 10, GRB>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 11, GRB>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 12, GRB>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
 
     // Initialize the color palettes for the wave layers
-    WaveCrgbMapPtr palYellowRed, palDarkGreen, palDarkBlue, palYellowWhite, palPurpleWhite;  // Color palettes for the wave layers
+    WaveCrgbMapPtr palYellowRed, palYellowWhite, palPurpleWhite, palBlueWhite, palDarkGreen, palDarkBlue, palDarkOrange, palDarkRed, palDarkPurple;  // Color palettes for the wave layers
     palYellowRed = fl::make_shared<WaveCrgbGradientMap>(yellowRedGradientPal);
+    palYellowWhite = fl::make_shared<WaveCrgbGradientMap>(yellowWhiteGradientPal);
     palPurpleWhite = fl::make_shared<WaveCrgbGradientMap>(purpleWhiteGradientPal);
+    palBlueWhite = fl::make_shared<WaveCrgbGradientMap>(blueWhiteGradientPal);
     palDarkBlue = fl::make_shared<WaveCrgbGradientMap>(darkBlueGradientPal);
     palDarkGreen = fl::make_shared<WaveCrgbGradientMap>(darkGreenGradientPal);
-    palYellowWhite = fl::make_shared<WaveCrgbGradientMap>(yellowWhiteGradientPal);
+    palDarkRed = fl::make_shared<WaveCrgbGradientMap>(darkRedGradientPal);
+    palDarkOrange = fl::make_shared<WaveCrgbGradientMap>(darkOrangeGradientPal);
+    palDarkPurple = fl::make_shared<WaveCrgbGradientMap>(darkPurpleGradientPal);
 
     // Create parameter structures for each wave layer's blur settings
     Blend2dParams lower_params = {
@@ -344,9 +378,7 @@ void wavefx_setup() {
     bigWaveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
 
     setWaveParameters(bigWaveLower, 0.007f, 10.0f);  // slower wave decay for big waves
-    setWaveParameters(bigWaveUpper, 0.004f, 10.0f);
-    //setWaveParameters(bigWaveLower, 0.020f, 8.0f);  // faster wave decay for big waves
-    //setWaveParameters(bigWaveUpper, 0.018f, 8.0f);
+    setWaveParameters(bigWaveUpper, 0.004f, 10.5f);
 
     fxBlend.add(bigWaveLower);  // Add the big wave layers to the blender
     fxBlend.add(bigWaveUpper);
@@ -357,12 +389,22 @@ void wavefx_setup() {
     playerArray[1].waveLower.setCrgbMap(palDarkGreen);
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
 
+    playerArray[2].waveLower.setCrgbMap(palDarkRed);
+    playerArray[2].waveUpper.setCrgbMap(palPurpleWhite);
+
+    playerArray[3].waveLower.setCrgbMap(palDarkOrange);
+    playerArray[3].waveUpper.setCrgbMap(palYellowWhite);
+
+    playerArray[4].waveLower.setCrgbMap(palDarkPurple);
+    playerArray[4].waveUpper.setCrgbMap(palBlueWhite);
+
 
     // Apply global blur settings to the blender
     fxBlend.setGlobalBlurAmount(0);       // Overall blur strength
     fxBlend.setGlobalBlurPasses(1);       // Number of blur passes
-}
 
+    FastLED.setBrightness(20);  // Default brightness for the LED strip
+}
 
 void wavefx_loop() {
     uint32_t now = millis();
@@ -389,17 +431,20 @@ void wavefx_loop() {
     for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
         PlayerData * player1 = &playerArray[i];
         for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
-
             PlayerData * player2 = &playerArray[j];
+
+            // if timestamps are close
             if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
                 (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
 
-                // Trigger big wave transition if timestamps are close
+                // Start big wave animation 
                 player1->bigWaveTransition.trigger(now, 70, 0, 0);
                 player2->bigWaveTransition.trigger(now, 70, 0, 0);
-                // reset the trigger timestamps to avoid re-triggering
-                player1->trigger1Timestamp=player2->trigger1Timestamp=player1->trigger2Timestamp=player2->trigger2Timestamp=0;  
 
+                // reset the trigger timestamps to avoid re-triggering
+                player1->trigger1Timestamp = player2->trigger1Timestamp = player1->trigger2Timestamp = player2->trigger2Timestamp = 0;
+
+                // Trigger the big wave MIDI notes
                 usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // in case note is still on, turn it off
                 bigwaveNote= 60 + player1->tonescale [bigWaveNoteIndex++ % 7];
                 usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
@@ -420,8 +465,14 @@ void wavefx_loop() {
         usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note off for big wave effect, channel 7
     }
 
-    Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
-    fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
+    if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
+        playIdleAnimation();  // Play idle animation if no user activity for a while
+    }
+    else {
+        Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
+        fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
+    }
+
     FastLED.show();         // Send the color data to the actual LEDs
 
     static int frameCount = 0;  // Frame counter for performance monitoring
@@ -429,49 +480,23 @@ void wavefx_loop() {
     frameCount++;
 
     // If debug output is enabled, print the frame rate and free RAM every second
-    #ifdef CREATE_DEBUG_OUTPUT
-        if (millis() - frameTime >= 1000) {
+    if (millis() - frameTime >= 1000) {
+        int act_brightness = map (analogRead(USER_POTI_SIGNAL_PIN), 0, 1023, 0, MAXIMUM_BRIGHTNESS);  // Read brightness from potentiometer
+        FastLED.setBrightness(act_brightness);  // Set the overall brightness (0-255)
+        #ifdef CREATE_DEBUG_OUTPUT
             // Every second, print the frame rate
             Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);
             frameCount = 0;  // Reset frame counter
             frameTime = millis();  // Update last frame time
-        }
-    #endif
+        #endif
+    }
 }
 
 
-// FastLED.addLeds<NUM_PLAYERS, WS2811, 10>(leds,NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
 /*
-    for (int i=0; i< NUM_PLAYERS; i++) {
-        switch (i) {
-            case 0: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+0>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
-            case 1: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+1>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
-            case 2: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+2>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
-            case 3: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+3>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
-            case 4: FastLED.addLeds<NEOPIXEL, NEOPIXEL_PIN+4>(leds, NUM_LEDS_PER_PLAYER*i, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap); break;
-        }
-    }
-
-*/
-
-/*
-    static int xPos=0, yPos=0;
-    leds[xyMap(xPos, yPos) ] = CRGB::Red;
-    FastLED.show();
-    xPos++;
-    if (xPos >= WIDTH) {
-        xPos = 0;  // Reset x position when reaching the end of the row
-        yPos++;
-        if (yPos >= HEIGHT) {
-            yPos = 0;  // Reset y position when reaching the end of the column
-        }
-    }
-    delay(100);  // Delay to control the speed of the animation
-*/
-
-/*
-     instrument = (instrument + 1) % 10; // Cycle through instruments 0-9
-     usbMIDI.sendProgramChange(instrument, 1);
-     usbMIDI.sendControlChange(0, instrument, 1);  // Bank Select MSB = 1
-     usbMIDI.sendControlChange(32, 0, 1); // Bank Select LSB = 0
+    // Example of how to send MIDI program change messages to change the instrument
+    instrument = (instrument + 1) % 10; // Cycle through instruments 0-9
+    usbMIDI.sendProgramChange(instrument, 1);
+    usbMIDI.sendControlChange(0, instrument, 1);  // Bank Select MSB = 1
+    usbMIDI.sendControlChange(32, 0, 1); // Bank Select LSB = 0
 */
