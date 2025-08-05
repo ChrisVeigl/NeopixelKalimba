@@ -5,6 +5,7 @@
 // #define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 // #define USE_RED_GREEN_IDLE_ANIMATION   // define to use the red-green idle animation 
+#define PLAY_IDLE_ANIM_NOTES // define to play MIDI notes during idle animation
 
 #define NUMBER_OF_PLAYERS 5 // Number of players (stripes)
 

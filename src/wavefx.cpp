@@ -60,6 +60,8 @@ int bigwaveNote = 0;  // MIDI note for big wave effect, will be set later based 
 uint32_t bigWaveRunTime = 0;  
 int bigWaveNoteIndex = 0;  // Index for the "travelling" big wave note in the tone scale
 uint32_t lastUserActivity=0;  // Timestamp of the last user interaction (button press, wave trigger, etc.)
+int idleAnimNote = 0;  // MIDI note for idle animation, will be set later based on player tone scale
+
 
 // Create a player data structure to hold wave layers and user interaction data
 struct PlayerData {
@@ -145,6 +147,10 @@ void playIdleAnimation() {
                 impact= randomFloat(0.01f, 0.03f);  // Random impact strength
                 duration=random(100,500);
                 animCounter=0;
+                #ifdef PLAY_IDLE_ANIM_NOTES
+                idleAnimNote = 60 + playerArray[playerId].tonescale [random(0,7)];
+                usbMIDI.sendNoteOn(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Send MIDI note for idle animation
+                #endif
             }
 
             if (animCounter > 0 && animCounter < duration ) {
@@ -153,6 +159,12 @@ void playIdleAnimation() {
                 playerArray[playerId].waveLower.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
                 playerArray[playerId].waveUpper.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
             }
+            #ifdef PLAY_IDLE_ANIM_NOTES
+            if (animCounter == duration) {
+                usbMIDI.sendNoteOff(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Stop the MIDI note for idle animation
+                idleAnimNote = 0;  // Reset the idle animation note
+            }
+            #endif
         }
     #endif
 }
@@ -488,6 +500,11 @@ void wavefx_loop() {
 
     if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
         playIdleAnimation();  // Play idle animation if no user activity for a while
+    } else {
+        if (idleAnimNote != 0) {  // If idle animation note is set, turn it off!
+            usbMIDI.sendNoteOff(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Stop the MIDI note for idle animation
+            idleAnimNote = 0;  // Reset the idle animation note
+        }
     }
 
     #ifndef USE_RED_GREEN_IDLE_ANIMATION
