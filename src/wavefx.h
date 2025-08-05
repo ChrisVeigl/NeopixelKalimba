@@ -62,7 +62,7 @@
 #define EXTERNAL_TRIGGER_ACTIVE_PERIOD 2000 // Time in milliseconds to override buttons with external triggers (from Serial1)
 
 #define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
-#define USER_ACTIVITY_TIMEOUT 2000 // Time in milliseconds to consider user inactive
+#define USER_ACTIVITY_TIMEOUT 30000 // Time in milliseconds to consider user inactive
 
 // Important: super sampling consumes more RAM and CPU! (2X or 4X result in out-of-memory crashes if full 40x50 matrix is used!!
 #define SUPER_SAMPLE_MODE SuperSample::SUPER_SAMPLE_NONE;  // SUPER_SAMPLE_2X or SUPER_SAMPLE_4X to create smoother waves
