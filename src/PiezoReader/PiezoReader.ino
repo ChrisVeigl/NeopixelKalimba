@@ -12,36 +12,76 @@
     
 */
 
-// #define DIRECT_PIEZO_MODE          // use less sensitive parameters for piezo sensors without epoxy coating!
+#include <math.h>
+
 // #define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
 #define OUTPUT_SIGNAL_TRACES 1     // for testing: display signal traces (serial plotter)
-
 #define NUMBER_OF_PLAYERS 5
-
-#ifdef DIRECT_PIEZO_MODE
-  #define PIEZO_THRESHOLD 250
-  #define PIEZO_IMPACT_VAL 20
-  #define PIEZO_TRIGGER_MAXVALUE 3500
-  #define PIEZO_DECAY 5
-#else
-  #define PIEZO_THRESHOLD 15
-  #define PIEZO_IMPACT_VAL 20
-  #define PIEZO_TRIGGER_MAXVALUE 3500
-  #define PIEZO_DECAY 5
-#endif 
-
-#define SAMPLING_PERIOD 1     // delay for sampling loop (in milliseconds)
+#define SAMPLING_PERIOD 1          // delay for sampling loop (in milliseconds)
 #define REPORTING_PERIOD 10
 
+#define PIEZO_THRESHOLD 5
+#define PIEZO_IMPACT_VAL 10
+#define PIEZO_TRIGGER_MAXVALUE 1000
+#define PIEZO_DECAY 3
+
+// IIR lowpass filter parameters
+#define LP_CUTOFF   1.0f         // Cutoff frequency (Hz)
+#define LP_Q        0.70710678f  // Quality factor for a Butterworth response
+#define FS          1000.0f      // Sampling rate (Hz)
+
+static const float w0    = 2.0f * M_PI * (LP_CUTOFF / FS);
+static const float alpha = sinf(w0) / (2.0f * LP_Q);
+static const float b0    =  (1.0f - cosf(w0)) / 2.0f;
+static const float b1    =   1.0f - cosf(w0);
+static const float b2    =  (1.0f - cosf(w0)) / 2.0f;
+static const float a0    =   1.0f + alpha;
+static const float a1    =  -2.0f * cosf(w0);
+static const float a2    =   1.0f - alpha;
+static const float bb0   = b0 / a0;
+static const float bb1   = b1 / a0;
+static const float bb2   = b2 / a0;
+static const float aa1   = a1 / a0;
+static const float aa2   = a2 / a0;
+
+typedef struct {
+    float xv1, xv2;  // x[n-1], x[n-2]
+    float yv1, yv2;  // y[n-1], y[n-2]
+} IIRLowPass2State;
+
+static inline void iir_lowpass2_init(IIRLowPass2State *st) {
+    st->xv1 = st->xv2 = 0.0f;
+    st->yv1 = st->yv2 = 0.0f;
+}
+
+static inline int iir_lowpass2_process(IIRLowPass2State *st, int x) {
+    float xn = (float)x;
+    // biquad difference equation
+    float yn = bb0 * xn
+             + bb1 * st->xv1
+             + bb2 * st->xv2
+             - aa1 * st->yv1
+             - aa2 * st->yv2;
+    // shift delay-lines
+    st->xv2 = st->xv1;
+    st->xv1 = xn;
+    st->yv2 = st->yv1;
+    st->yv1 = yn;
+    return (int)yn;
+}
+
 int piezoTrigger[NUMBER_OF_PLAYERS * 2]={0};
+IIRLowPass2State filterState[NUMBER_OF_PLAYERS*2];
 
 uint8_t trigger1Group=0, lastTrigger1Group=0;
 uint8_t trigger2Group=0x80, lastTrigger2Group=0x80;
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(115200);
   Serial1.begin(115200);
+  for(int ch = 0; ch < NUMBER_OF_PLAYERS*2; ch++) {
+      iir_lowpass2_init(&filterState[ch]);
+  }
 }
 
 void loop() {
@@ -59,7 +99,8 @@ void loop() {
   }
   
   for (int i=0; i < NUMBER_OF_PLAYERS * 2; i++) {
-    int piezoVal=analogRead(A0+i);
+    int signal=analogRead(A0+i);
+    int piezoVal=signal-iir_lowpass2_process(&filterState[i],signal);
     
     if (i%2) actTriggerGroup = &trigger2Group; else actTriggerGroup = &trigger1Group;
     
