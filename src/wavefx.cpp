@@ -17,17 +17,11 @@
 #include "fl/time_alpha.h"   // Time-based alpha/transition effects
 #include "fx/2d/blend.h"     // 2D blending effects between layers
 #include "fx/2d/wave.h"      // 2D wave simulation
-#include "colors&tonescales.h" // Color definitions and tone scales
+
 #include "wavefx.h"  // Header file for this sketch
+#include "colors&tonescales.h" // Color definitions and tone scales
 #include "pixelmap.h"  // Pixel mapping for the LED matrix
-
-extern unsigned long _heap_start;
-extern unsigned long _heap_end;
-extern char *__brkval;
-
-int freeram() {
-  return (char *)&_heap_end - __brkval;
-}
+#include "utils.h"  // Utility functions (e.g., random number generation)
 
 using namespace fl;        // Use the FastLED namespace for convenience
 
@@ -113,28 +107,54 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
 
 
 void playIdleAnimation() {
-    static int xPos=0, yPos=0;
     static uint32_t lastUpdateTime = 0;  // Timestamp of the last update
-    static uint8_t red = 255, green = 0;  // RGB color components
 
-    if (millis() - lastUpdateTime > 10) {  // Update every 100 ms
-        lastUpdateTime = millis();  // Update the timestamp
-        
-        //colorIndex = (colorIndex + 1) % 500;
-        //int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
-        leds[xyMap(xPos, yPos)] = CRGB(red, green, 0);
-        xPos++;
-        if (xPos >= HEIGHT) {
-            xPos = 0;  // Reset x position when reaching the end of the row
-            yPos++;
-            if (red) {red=0;green=255;} 
-            else {red=255;green=0;} // Switch to green color
-            if (yPos >= WIDTH * NUMBER_OF_PLAYERS) {
-                yPos = 0;  // Reset y position when reaching the end of the column
-                
+    #ifdef USE_RED_GREEN_IDLE_ANIMATION
+        static int xPos=0, yPos=0;
+        static uint8_t red = 255, green = 0;  // RGB color components
+        if (millis() - lastUpdateTime > 10) {  // Update every 10 ms
+            lastUpdateTime = millis();  // Update the timestamp
+            
+            //colorIndex = (colorIndex + 1) % 500;
+            //int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
+            leds[xyMap(xPos, yPos)] = CRGB(red, green, 0);
+            xPos++;
+            if (xPos >= HEIGHT) {
+                xPos = 0;  // Reset x position when reaching the end of the row
+                yPos++;
+                if (red) {red=0;green=255;} 
+                else {red=255;green=0;} // Switch to green color
+                if (yPos >= WIDTH * NUMBER_OF_PLAYERS) {
+                    yPos = 0;  // Reset y position when reaching the end of the column
+                    
+                }
             }
         }
-    }
+    #else
+        static float xPos=0.0f, yPos=0.0f;
+        static int animCounter=0, playerId = 0, duration=100;  
+        static float xSpeed = 0.2f, ySpeed = 0.1f,impact=0.01f;   
+        if (millis() - lastUpdateTime > 10) {  // Update every 10 ms
+            lastUpdateTime = millis();  // Update the timestamp
+            animCounter++;
+            if (animCounter > duration*2) {
+                playerId = random (0,NUMBER_OF_PLAYERS);
+                xSpeed= randomFloat(-0.15f, 0.15f);  // Random horizontal speed
+                // ySpeed= randomFloat(0.05f, 0.15f); 
+                yPos= randomFloat(0.0f, HEIGHT/3);  // Random vertical position
+                impact= randomFloat(0.01f, 0.03f);  // Random impact strength
+                duration=random(100,500);
+                animCounter=0;
+            }
+
+            if (animCounter > 0 && animCounter < duration ) {
+                xPos += xSpeed; if (xPos >= WIDTH) xPos = 0; if (xPos < 0) xPos = WIDTH - 1;  // Wrap around horizontally
+                yPos += ySpeed; if (yPos >= HEIGHT) animCounter=duration; // yPos = 0;
+                playerArray[playerId].waveLower.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
+                playerArray[playerId].waveUpper.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
+            }
+        }
+    #endif
 }
 
 
@@ -365,6 +385,8 @@ void wavefx_setup() {
         p.waveLower.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
         p.waveUpper.setCrgbMap(palPurpleWhite);
         p.waveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
+        setWaveParameters(p.waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);  // default wave parameters for lower layer
+        setWaveParameters(p.waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);  // Set wave parameters for upper layer
 
         // Add wave layers to the blender (order matters - lower layer is added first (background))
         fxBlend.add(p.waveLower);
@@ -391,16 +413,12 @@ void wavefx_setup() {
     // Now set player-specific color palettes and tone scales
     playerArray[1].waveLower.setCrgbMap(palDarkGreen);
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
-
     playerArray[2].waveLower.setCrgbMap(palDarkRed);
     playerArray[2].waveUpper.setCrgbMap(palPurpleWhite);
-
     playerArray[3].waveLower.setCrgbMap(palDarkOrange);
     playerArray[3].waveUpper.setCrgbMap(palYellowWhite);
-
     playerArray[4].waveLower.setCrgbMap(palDarkPurple);
     playerArray[4].waveUpper.setCrgbMap(palBlueWhite);
-
 
     // Apply global blur settings to the blender
     fxBlend.setGlobalBlurAmount(0);       // Overall blur strength
@@ -471,10 +489,11 @@ void wavefx_loop() {
     if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
         playIdleAnimation();  // Play idle animation if no user activity for a while
     }
-    else {
+
+    #ifndef USE_RED_GREEN_IDLE_ANIMATION
         Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
         fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
-    }
+    #endif
 
     FastLED.show();         // Send the color data to the actual LEDs
 
