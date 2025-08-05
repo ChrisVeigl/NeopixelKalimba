@@ -19,6 +19,7 @@
 #include "fx/2d/wave.h"      // 2D wave simulation
 #include "colors&tonescales.h" // Color definitions and tone scales
 #include "wavefx.h"  // Header file for this sketch
+#include "pixelmap.h"  // Pixel mapping for the LED matrix
 
 extern unsigned long _heap_start;
 extern unsigned long _heap_end;
@@ -38,7 +39,7 @@ uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamp
 
 // Create mappings between 1D array positions and 2D x,y coordinates
 #ifdef USE_BIG_MATRIX
-    XYMap xyMap(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
+    XYMap xyMap = XYMap::constructWithLookUpTable(WIDTH*NUMBER_OF_PLAYERS, HEIGHT, XYTable, 0);  // For the actual LED output (may be serpentine)
     XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, false);         // For the wave simulation (always rectangular grid)
 #else
     XYMap xyMap(WIDTH, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
@@ -114,19 +115,21 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
 void playIdleAnimation() {
     static int xPos=0, yPos=0;
     static uint32_t lastUpdateTime = 0;  // Timestamp of the last update
-    static int colorIndex = 0;  // Current color index
+    static uint8_t red = 255, green = 0;  // RGB color components
 
     if (millis() - lastUpdateTime > 10) {  // Update every 100 ms
         lastUpdateTime = millis();  // Update the timestamp
         
-        colorIndex = (colorIndex + 1) % 500;
-        int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
-        leds[xyMap(xPos, yPos)] = CRGB(c/10, c/15, c/5);
+        //colorIndex = (colorIndex + 1) % 500;
+        //int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
+        leds[xyMap(xPos, yPos)] = CRGB(red, green, 0);
         xPos++;
-        if (xPos >= WIDTH) {
+        if (xPos >= HEIGHT) {
             xPos = 0;  // Reset x position when reaching the end of the row
             yPos++;
-            if (yPos >= HEIGHT) {
+            if (red) {red=0;green=255;} 
+            else {red=255;green=0;} // Switch to green color
+            if (yPos >= WIDTH * NUMBER_OF_PLAYERS) {
                 yPos = 0;  // Reset y position when reaching the end of the column
                 
             }
@@ -151,7 +154,7 @@ void triggerWave(int pos, PlayerData * player) {
     int y = pos==-1 ? random(min_y, max_y) : pos;
     
     #ifdef USE_BIG_MATRIX
-      int xOffset = playerId * WIDTH;  // Offset for the player ID to separate wave layers
+      int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
     #else
       // In test mode, use a fixed position for small led matrix
       int xOffset =0;
@@ -258,8 +261,8 @@ void processPlayers(uint32_t now,PlayerData * player) {
         player->trigger1Active = 1;
         if (player->joystickMode == 0) noteControlStickValue = random (0,512);  // if no joystick attached, use random value in bottom half!
         // Set wave parameters for longer wave duration  
-        setWaveParameters(player->waveLower, 0.005f, 12.0f);        // (speed, dampening)
-        setWaveParameters(player->waveUpper, 0.003f, 12.0f);   
+        setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
+        setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
@@ -273,8 +276,8 @@ void processPlayers(uint32_t now,PlayerData * player) {
     else if ((trigger1State == HIGH)  && (player->trigger1Active == 1)) {
         player->trigger1Active = 0;
         // Set wave parameters for faster wave decay
-        setWaveParameters(player->waveLower, 0.005f, 10.0f);
-        setWaveParameters(player->waveUpper, 0.003f, 8.0f);
+        setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
+        setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
         usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1); 
     } 
 
@@ -284,8 +287,8 @@ void processPlayers(uint32_t now,PlayerData * player) {
         player->trigger2Active = 1;
         if (player->joystickMode == 0) noteControlStickValue = random (512,1023);  // if no joystick attached, use random value in top half!
         // Set wave parameters for longer wave duration  
-        setWaveParameters(player->waveLower, 0.005f, 12.0f);        // (speed, dampening)
-        setWaveParameters(player->waveUpper, 0.003f, 12.0f);   
+        setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
+        setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
@@ -299,8 +302,8 @@ void processPlayers(uint32_t now,PlayerData * player) {
     else if ((trigger2State == HIGH) && (player->trigger2Active == 1)) {
         player->trigger2Active = 0;  // Reset fancy button state
         // Set wave parameters for faster wave decay
-        setWaveParameters(player->waveLower, 0.005f, 10.0f);
-        setWaveParameters(player->waveUpper, 0.003f, 8.0f);
+        setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
+        setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
         usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1); 
     }
 }
@@ -319,11 +322,11 @@ void wavefx_setup() {
 
     auto screenmap = xyMap.toScreenMap();
     //CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 9, GRB>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 10, GRB>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 11, GRB>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 12, GRB>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812,  8, LEDSTRIPE_COLOR_LAYOUT>( leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812,  9, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 10, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 11, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 12, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
 
     // Initialize the color palettes for the wave layers
     WaveCrgbMapPtr palYellowRed, palYellowWhite, palPurpleWhite, palBlueWhite, palDarkGreen, palDarkBlue, palDarkOrange, palDarkRed, palDarkPurple;  // Color palettes for the wave layers
@@ -339,13 +342,13 @@ void wavefx_setup() {
 
     // Create parameter structures for each wave layer's blur settings
     Blend2dParams lower_params = {
-        .blur_amount = 0,            // Blur amount for lower layer
-        .blur_passes = 1,            // Blur passes for lower layer
+        .blur_amount = BLUR_AMOUNT_LOWER,            // Blur amount for lower layer
+        .blur_passes = BLUR_PASSES_LOWER,            // Blur passes for lower layer
     };
 
     Blend2dParams upper_params = {
-        .blur_amount = 95,           // Blur amount for upper layer
-        .blur_passes = 1,            // Blur passes for upper layer
+        .blur_amount = BLUR_AMOUNT_UPPER,           // Blur amount for upper layer
+        .blur_passes = BLUR_PASSES_UPPER,            // Blur passes for upper layer
     };
 
     for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
@@ -377,8 +380,8 @@ void wavefx_setup() {
     bigWaveUpper.setCrgbMap(palYellowRed);
     bigWaveUpper.setEasingMode(U8EasingFunction::WAVE_U8_MODE_LINEAR);
 
-    setWaveParameters(bigWaveLower, 0.007f, 10.0f);  // slower wave decay for big waves
-    setWaveParameters(bigWaveUpper, 0.004f, 10.5f);
+    setWaveParameters(bigWaveLower, BIGWAVE_SPEED_LOWER, BIGWAVE_DAMPING_LOWER);  // slower wave decay for big waves
+    setWaveParameters(bigWaveUpper, BIGWAVE_SPEED_UPPER, BIGWAVE_DAMPING_UPPER);
 
     fxBlend.add(bigWaveLower);  // Add the big wave layers to the blender
     fxBlend.add(bigWaveUpper);
@@ -486,9 +489,10 @@ void wavefx_loop() {
         #ifdef CREATE_DEBUG_OUTPUT
             // Every second, print the frame rate
             Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);
-            frameCount = 0;  // Reset frame counter
-            frameTime = millis();  // Update last frame time
         #endif
+
+        frameCount = 0;  // Reset frame counter
+        frameTime = millis();  // Update last frame time
     }
 }
 

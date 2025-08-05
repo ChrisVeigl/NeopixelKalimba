@@ -5,16 +5,46 @@
 // #define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 
+
 #define NUMBER_OF_PLAYERS 5 // Number of players (stripes)
 
+// specific parameters for small led-matrix or big matrix (led-curtain)
 #ifdef USE_BIG_MATRIX
-    #define WIDTH 8             // Number of columns in the matrix  
+    #define WIDTH 8             // Number of columns per user
     #define HEIGHT 50           // Number of rows in the matrix
+	#define LEDSTRIPE_COLOR_LAYOUT RGB
+
+    #define WAVE_SPEED_LOWER 0.01f    
+	#define WAVE_SPEED_UPPER 0.006f
+	#define WAVE_DAMPING_LOWER_RELEASE 5.0f
+	#define WAVE_DAMPING_UPPER_RELEASE 3.0f
+
+    #define BLUR_AMOUNT_LOWER 0
+    #define BLUR_AMOUNT_UPPER 95
+    #define BLUR_PASSES_LOWER 1
+    #define BLUR_PASSES_UPPER 1
 #else
-    #define WIDTH 8             // Number of columns in the matrix  
-    #define HEIGHT 32           // Number of rows in the matrix
+    #define WIDTH 8
+    #define HEIGHT 32
+	#define LEDSTRIPE_COLOR_LAYOUT GRB
+
+    #define WAVE_SPEED_LOWER 0.005f
+	#define WAVE_SPEED_UPPER 0.003f
+	#define WAVE_DAMPING_LOWER_RELEASE 10.0f
+	#define WAVE_DAMPING_UPPER_RELEASE 8.0f
+
+    #define BLUR_AMOUNT_LOWER 50
+    #define BLUR_AMOUNT_UPPER 50
+    #define BLUR_PASSES_LOWER 2
+    #define BLUR_PASSES_UPPER 2
 #endif
 
+#define BIGWAVE_SPEED_LOWER 0.007f
+#define BIGWAVE_DAMPING_LOWER 10.0f
+#define BIGWAVE_SPEED_UPPER 0.004f
+#define BIGWAVE_DAMPING_UPPER 10.5f
+#define WAVE_DAMPING_LOWER_TRIGGER 12.0f
+#define WAVE_DAMPING_UPPER_TRIGGER 12.0f
 
 #define NUM_LEDS (WIDTH * HEIGHT * NUMBER_OF_PLAYERS)   // Total number of LEDs
 #define NUM_LEDS_PER_PLAYER (WIDTH) * (HEIGHT)   // Total number of LEDs per stripe (multi strip setup)
@@ -24,14 +54,14 @@
 #define USER_POTI_GND_PIN 25       // user potentiometer ground pin
 #define USER_POTI_SIGNAL_PIN A10   // user potentiometer signal pin
 
-#define MAXIMUM_BRIGHTNESS 150   // Maximum brightness for the LED strip (0-255)
+#define MAXIMUM_BRIGHTNESS 255    // Maximum brightness for the all leds (0-255)
 #define MIDINOTE_VELOCITY 120   // MIDI note velocity for sending notes
 
 #define BIGWAVE_TIME_THRESHOLD 20  // Time in milliseconds to consider two wave triggers as "close enough" for big waves
 #define EXTERNAL_TRIGGER_ACTIVE_PERIOD 2000 // Time in milliseconds to override buttons with external triggers (from Serial1)
 
 #define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
-#define USER_ACTIVITY_TIMEOUT 30000 // Time in milliseconds to consider user inactive
+#define USER_ACTIVITY_TIMEOUT 2000 // Time in milliseconds to consider user inactive
 
 // Important: super sampling consumes more RAM and CPU! (2X or 4X result in out-of-memory crashes if full 40x50 matrix is used!!
 #define SUPER_SAMPLE_MODE SuperSample::SUPER_SAMPLE_NONE;  // SUPER_SAMPLE_2X or SUPER_SAMPLE_4X to create smoother waves
