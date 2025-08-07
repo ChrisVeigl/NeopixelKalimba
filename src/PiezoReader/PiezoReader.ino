@@ -14,55 +14,67 @@
 
 #include <math.h>
 
-// #define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
+//#define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
 #define OUTPUT_SIGNAL_TRACES 1     // for testing: display signal traces (serial plotter)
 #define NUMBER_OF_PLAYERS 5
 #define SAMPLING_PERIOD 1          // delay for sampling loop (in milliseconds)
-#define REPORTING_PERIOD 10
+#define REPORTING_PERIOD 10        // send updates to Teensy4.1 and Terminal every 10 ms
 
-#define PIEZO_THRESHOLD 5
-#define PIEZO_IMPACT_VAL 10
+#define TRIGGER_SIGNAL_LOWPASS_CUTOFF   35.0f   // cutoff frequency for trigger signal
+#define BASELINE_SIGNAL_LOWPASS_CUTOFF   0.3f   // cutoff frequency for baseline signal
+
+#define PIEZO_THRESHOLD 8
+#define PIEZO_IMPACT_VAL 20
 #define PIEZO_TRIGGER_MAXVALUE 1000
-#define PIEZO_DECAY 3
+#define PIEZO_DECAY 5
 
 // IIR lowpass filter parameters
-#define LP_CUTOFF   1.0f         // Cutoff frequency (Hz)
-#define LP_Q        0.70710678f  // Quality factor for a Butterworth response
-#define FS          1000.0f      // Sampling rate (Hz)
 
-static const float w0    = 2.0f * M_PI * (LP_CUTOFF / FS);
-static const float alpha = sinf(w0) / (2.0f * LP_Q);
-static const float b0    =  (1.0f - cosf(w0)) / 2.0f;
-static const float b1    =   1.0f - cosf(w0);
-static const float b2    =  (1.0f - cosf(w0)) / 2.0f;
-static const float a0    =   1.0f + alpha;
-static const float a1    =  -2.0f * cosf(w0);
-static const float a2    =   1.0f - alpha;
-static const float bb0   = b0 / a0;
-static const float bb1   = b1 / a0;
-static const float bb2   = b2 / a0;
-static const float aa1   = a1 / a0;
-static const float aa2   = a2 / a0;
+#define FS  1000.0f  // Sampling rate (Hz)
 
 typedef struct {
+    // coefficients
+    float b0, b1, b2;
+    float a1, a2;
+    // state
     float xv1, xv2;  // x[n-1], x[n-2]
     float yv1, yv2;  // y[n-1], y[n-2]
-} IIRLowPass2State;
+} IIRLowPassState;
 
-static inline void iir_lowpass2_init(IIRLowPass2State *st) {
+// Initialize a filter instance
+//   f    = cutoff freq in Hz (e.g. 20.0f)
+//   Q    = quality factor (e.g. 0.707f for Butterworth)
+//   st   = pointer to your filter instance
+static inline void iir_lowpass2_init(IIRLowPassState *st, float f, float Q) {
+    float w0    = 2.0f * M_PI * (f / FS);
+    float alpha = sinf(w0) / (2.0f * Q);
+
+    float b0n =  (1.0f - cosf(w0)) / 2.0f;
+    float b1n =   1.0f - cosf(w0);
+    float b2n =  (1.0f - cosf(w0)) / 2.0f;
+    float a0n =   1.0f + alpha;
+    float a1n =  -2.0f * cosf(w0);
+    float a2n =   1.0f - alpha;
+    st->b0 = b0n / a0n;
+    st->b1 = b1n / a0n;
+    st->b2 = b2n / a0n;
+    st->a1 = a1n / a0n;
+    st->a2 = a2n / a0n;
     st->xv1 = st->xv2 = 0.0f;
     st->yv1 = st->yv2 = 0.0f;
 }
 
-static inline int iir_lowpass2_process(IIRLowPass2State *st, int x) {
+// Returns the filtered sample (int).
+static inline int iir_lowpass2_process(IIRLowPassState *st, int x) {
     float xn = (float)x;
-    // biquad difference equation
-    float yn = bb0 * xn
-             + bb1 * st->xv1
-             + bb2 * st->xv2
-             - aa1 * st->yv1
-             - aa2 * st->yv2;
-    // shift delay-lines
+    // standard biquad difference equation:
+    float yn = st->b0 * xn
+             + st->b1 * st->xv1
+             + st->b2 * st->xv2
+             - st->a1 * st->yv1
+             - st->a2 * st->yv2;
+
+    // shift delay‐lines
     st->xv2 = st->xv1;
     st->xv1 = xn;
     st->yv2 = st->yv1;
@@ -70,37 +82,46 @@ static inline int iir_lowpass2_process(IIRLowPass2State *st, int x) {
     return (int)yn;
 }
 
-int piezoTrigger[NUMBER_OF_PLAYERS * 2]={0};
-IIRLowPass2State filterState[NUMBER_OF_PLAYERS*2];
+IIRLowPassState filterState[NUMBER_OF_PLAYERS * 4];   // 2 triggers per player, 2 signals per trigger
 
+int piezoTrigger[NUMBER_OF_PLAYERS * 2]={0};
 uint8_t trigger1Group=0, lastTrigger1Group=0;
 uint8_t trigger2Group=0x80, lastTrigger2Group=0x80;
 
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
-  for(int ch = 0; ch < NUMBER_OF_PLAYERS*2; ch++) {
-      iir_lowpass2_init(&filterState[ch]);
+  for(int i = 0; i < NUMBER_OF_PLAYERS*2; i++) {
+    iir_lowpass2_init(&filterState[i*2], TRIGGER_SIGNAL_LOWPASS_CUTOFF, 0.707f);
+    iir_lowpass2_init(&filterState[i*2+1], BASELINE_SIGNAL_LOWPASS_CUTOFF, 0.707f);
   }
 }
 
 void loop() {
-  #ifdef ONLY_SHOW_CHANNEL_TRACE
-    showChannelTrace(ONLY_SHOW_CHANNEL_TRACE);  return;   // for testing: only show raw values of one channel!
-  #endif
-  
+ 
   static uint32_t reportingTimestamp=0;
+  static int fps=0;
   int reportNow=0;
   uint8_t * actTriggerGroup=0;
-  
-  if (millis()-reportingTimestamp>REPORTING_PERIOD) {
+
+  uint32_t now=millis();
+  if (now-reportingTimestamp>REPORTING_PERIOD) {
     reportNow=1;
-    reportingTimestamp=millis();
+    reportingTimestamp=now;
   }
   
   for (int i=0; i < NUMBER_OF_PLAYERS * 2; i++) {
-    int signal=analogRead(A0+i);
-    int piezoVal=signal-iir_lowpass2_process(&filterState[i],signal);
+    int raw=analogRead(A0+i);
+    int signal=iir_lowpass2_process(&filterState[i*2],raw);      //  20 Hz LP
+    int baseline=iir_lowpass2_process(&filterState[i*2+1],raw);  // 0.5 Hz LP
+    int piezoVal=signal-baseline;
+
+    #ifdef ONLY_SHOW_CHANNEL_TRACE
+      static int cnt=0;
+      if (++cnt % 5 == 0) Serial.printf("%d,%d\n",signal, raw);
+      delay(SAMPLING_PERIOD);
+      return;
+    #endif
     
     if (i%2) actTriggerGroup = &trigger2Group; else actTriggerGroup = &trigger1Group;
     
@@ -122,7 +143,10 @@ void loop() {
   }
   
   if (reportNow) { 
-    if (OUTPUT_SIGNAL_TRACES)  Serial.println("");  // newline, needed by Serial Plotter
+    if (OUTPUT_SIGNAL_TRACES)  { 
+      // Serial.print(fps); fps=0;
+      Serial.println("");  // newline, needed by Serial Plotter
+    }
 
     // send changes to Teensy4.1
     if (lastTrigger1Group!=trigger1Group) {
@@ -134,9 +158,12 @@ void loop() {
        lastTrigger2Group=trigger2Group;
     }
   }
-  delay(SAMPLING_PERIOD);
+  fps++;
+  while (millis()-now < SAMPLING_PERIOD);   // try to keep the loop update rate at sampling frequency
 }
 
+/*
+// fast sampling and display of one channel  (for debugging)
 void showChannelTrace(int c) {
   static int sum=0;
   static int count=0;
@@ -150,3 +177,5 @@ void showChannelTrace(int c) {
   }
   delayMicroseconds(200);
 }
+
+*/
