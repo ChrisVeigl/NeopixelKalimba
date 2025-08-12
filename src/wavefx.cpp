@@ -121,12 +121,12 @@ void playIdleAnimation() {
             //int c = colorIndex < 250 ? colorIndex : (500 - colorIndex);  // Create a gradient effect
             leds[xyMap(xPos, yPos)] = CRGB(red, green, 0);
             xPos++;
-            if (xPos >= HEIGHT) {
+            if (xPos >= WIDTH * NUMBER_OF_PLAYERS) {
                 xPos = 0;  // Reset x position when reaching the end of the row
                 yPos++;
                 if (red) {red=0;green=255;} 
                 else {red=255;green=0;} // Switch to green color
-                if (yPos >= WIDTH * NUMBER_OF_PLAYERS) {
+                if (yPos >= HEIGHT) {
                     yPos = 0;  // Reset y position when reaching the end of the column
                     
                 }
