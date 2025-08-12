@@ -1,6 +1,6 @@
 # Neopixel Kalimba
 
-The Neopixel Kalimba is an interactive light- and sound installation made for the Zoom Kindermuseum Vienna.
+The Neopixel Kalimba is an interactive light- and sound installation.
 It uses the [FastLED library](https://github.com/FastLED/) to display visual effects on a large NeoPixel matrix,
 and creates MIDI output for audio effects. The visuals are using layered WaveFx effects of the FastLED library 
 (upper and lower layer) per player. The number of players is configurable, each player can use different colors palettes and wave parameters,
