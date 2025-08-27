@@ -41,7 +41,7 @@ uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamp
 #endif
 
 // Create a blender that will combine the wave effecsts of all players
-Blend2d fxBlend(xyMap);
+Blend2d fxBlend(xyRect);
 
 // Create default configuration for the wave layers
 WaveFx::Args CreateDefWaveArgs() {
@@ -54,8 +54,8 @@ WaveFx::Args CreateDefWaveArgs() {
 }
 
 // Wave effects for bigWave
-WaveFx bigWaveLower(xyRect, CreateDefWaveArgs());
-WaveFx bigWaveUpper(xyRect, CreateDefWaveArgs());     
+WaveFx bigWaveLower(xyMap, CreateDefWaveArgs());
+WaveFx bigWaveUpper(xyMap, CreateDefWaveArgs());     
 int bigwaveNote = 0;  // MIDI note for big wave effect, will be set later based on player tone scale
 uint32_t bigWaveRunTime = 0;  
 int bigWaveNoteIndex = 0;  // Index for the "travelling" big wave note in the tone scale
@@ -84,9 +84,9 @@ struct PlayerData {
     uint32_t trigger2Timestamp = 0;  // Timestamp for the last trigger2 event
 
     // Constructor
-    PlayerData(const XYMap& xyRect, const WaveFx::Args& argsLower, const WaveFx::Args& argsUpper, int id, int pinAnalog, int pinT1, int pinT2 )
-        : waveLower(xyRect, argsLower),
-          waveUpper(xyRect, argsUpper),
+    PlayerData(const XYMap& xyMap, const WaveFx::Args& argsLower, const WaveFx::Args& argsUpper, int id, int pinAnalog, int pinT1, int pinT2 )
+        : waveLower(xyMap, argsLower),
+          waveUpper(xyMap, argsUpper),
           playerId(id),
           analogPin(pinAnalog),
           trigger1Pin(pinT1),
@@ -100,13 +100,18 @@ struct PlayerData {
 };
 
 PlayerData playerArray[NUMBER_OF_PLAYERS] = {
-    { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
-    { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
-    { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, 15},
-    { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 3, A0,  41, 40},
-    { xyRect, CreateDefWaveArgs(), CreateDefWaveArgs(), 4, A15, 38, 37 }
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, 15},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 3, A0,  41, 40},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 4, A15, 38, 37 }
 };
 
+void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
+    // Set the speed and dampening for one wave layer
+    waveLower.setSpeed(speed);
+    waveLower.setDampening(dampening);
+}
 
 void playIdleAnimation() {
     static uint32_t lastUpdateTime = 0;  // Timestamp of the last update
@@ -135,18 +140,21 @@ void playIdleAnimation() {
     #else
         static float xPos=0.0f, yPos=0.0f;
         static int animCounter=0, playerId = 0, duration=100;  
-        static float xSpeed = 0.2f, ySpeed = 0.1f,impact=0.01f;   
+        static float xSpeed = 0.2f, ySpeed = 0.1f,impact=0.03f;   
         if (millis() - lastUpdateTime > 10) {  // Update every 10 ms
             lastUpdateTime = millis();  // Update the timestamp
             animCounter++;
-            if (animCounter > duration*2) {
+            if (animCounter > duration *2) {
                 playerId = random (0,NUMBER_OF_PLAYERS);
-                xSpeed= randomFloat(-0.15f, 0.15f);  // Random horizontal speed
-                // ySpeed= randomFloat(0.05f, 0.15f); 
+                xSpeed= randomFloat(-0.10f, 0.10f);  // Random horizontal speed
+                ySpeed= randomFloat(0.05f, 0.10f); 
                 yPos= randomFloat(0.0f, HEIGHT/3);  // Random vertical position
-                impact= randomFloat(0.01f, 0.03f);  // Random impact strength
+                impact= randomFloat(0.02f, 0.05f);  // Random impact strength
                 duration=random(100,500);
                 animCounter=0;
+                setWaveParameters(playerArray[playerId].waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_IDLEANIM);
+                setWaveParameters(playerArray[playerId].waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_IDLEANIM);
+
                 #ifdef PLAY_IDLE_ANIM_NOTES
                 idleAnimNote = 60 + playerArray[playerId].tonescale [random(0,7)];
                 usbMIDI.sendNoteOn(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Send MIDI note for idle animation
@@ -154,7 +162,7 @@ void playIdleAnimation() {
             }
 
             if (animCounter > 0 && animCounter < duration ) {
-                xPos += xSpeed; if (xPos >= WIDTH) xPos = 0; if (xPos < 0) xPos = WIDTH - 1;  // Wrap around horizontally
+                xPos += xSpeed; if (xPos >= WIDTH*NUMBER_OF_PLAYERS) xPos = 0; if (xPos < 0) xPos = WIDTH*NUMBER_OF_PLAYERS - 1;  // Wrap around horizontally
                 yPos += ySpeed; if (yPos >= HEIGHT) animCounter=duration; // yPos = 0;
                 playerArray[playerId].waveLower.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
                 playerArray[playerId].waveUpper.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
@@ -178,8 +186,8 @@ void triggerWave(int pos, PlayerData * player) {
     // Calculate the boundaries for the ripple (15% from each edge)
     uint8_t min_x = perc * WIDTH;          // Left boundary
     uint8_t max_x = (1 - perc) * WIDTH;    // Right boundary
-    uint8_t min_y = perc * HEIGHT;         // Top boundary
-    uint8_t max_y = (1 - perc) * HEIGHT;   // Bottom boundary
+    uint8_t min_y = perc * PLAYER_MAX_YPOS;         // Top boundary
+    uint8_t max_y = (1 - perc) * PLAYER_MAX_YPOS;   // Bottom boundary
     
     // Generate a random position within these boundaries
     int x = random(min_x, max_x);
@@ -210,7 +218,7 @@ void applyBigWave(uint32_t now, PlayerData * player) {
 
     // Find the center of the display
     int mid_x = WIDTH / 2;
-    int mid_y = HEIGHT / 2;
+    int mid_y = BIGWAVE_YPOS;
     
     // Calculate the maximum distance from center (half the width)
     int amount = WIDTH / 4;   // /2
@@ -269,12 +277,6 @@ void applyBigWave(uint32_t now, PlayerData * player) {
     }
 }
 
-void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
-    // Set the speed and dampening for one wave layer
-    waveLower.setSpeed(speed);
-    waveLower.setDampening(dampening);
-}
-
 void processPlayers(uint32_t now,PlayerData * player) {
 
     int trigger1State = digitalRead(player->trigger1Pin);
@@ -295,7 +297,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         // Set wave parameters for longer wave duration  
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
-        triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
+        triggerWave(map (noteControlStickValue, 0, 1023, 2, PLAYER_MAX_YPOS), player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
         player->trigger1Note = player->tonescaleSize > 0 
@@ -321,7 +323,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         // Set wave parameters for longer wave duration  
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
-        triggerWave(map (noteControlStickValue, 0, 1023, 2, HEIGHT-2), player);  // create a wave at the determined position
+        triggerWave(map (noteControlStickValue, 0, 1023, 2, PLAYER_MAX_YPOS), player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
         player->trigger2Note = player->tonescaleSize > 0 

@@ -2,7 +2,7 @@
 
 #include <FastLED.h>      // Main FastLED library for controlling LEDs
 
-// #define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
+#define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 // #define USE_RED_GREEN_IDLE_ANIMATION   // define to use the red-green idle animation 
 #define PLAY_IDLE_ANIM_NOTES // define to play MIDI notes during idle animation
@@ -13,12 +13,14 @@
 #ifdef USE_BIG_MATRIX
     #define WIDTH 8             // Number of columns per user
     #define HEIGHT 50           // Number of rows in the matrix
+    #define PLAYER_MAX_YPOS 30
+    #define BIGWAVE_YPOS 30
 	#define LEDSTRIPE_COLOR_LAYOUT RGB
 
-    #define WAVE_SPEED_LOWER 0.01f    
-	#define WAVE_SPEED_UPPER 0.006f
-	#define WAVE_DAMPING_LOWER_RELEASE 5.0f
-	#define WAVE_DAMPING_UPPER_RELEASE 3.0f
+    #define WAVE_SPEED_LOWER 0.02f    
+	#define WAVE_SPEED_UPPER 0.012f
+	#define WAVE_DAMPING_LOWER_RELEASE 6.0f
+	#define WAVE_DAMPING_UPPER_RELEASE 5.0f
 
     #define BLUR_AMOUNT_LOWER 0
     #define BLUR_AMOUNT_UPPER 95
@@ -27,6 +29,8 @@
 #else
     #define WIDTH 8
     #define HEIGHT 32
+    #define PLAYER_MAX_YPOS 32
+    #define BIGWAVE_YPOS 16
 	#define LEDSTRIPE_COLOR_LAYOUT GRB
 
     #define WAVE_SPEED_LOWER 0.005f
@@ -46,6 +50,8 @@
 #define BIGWAVE_DAMPING_UPPER 10.5f
 #define WAVE_DAMPING_LOWER_TRIGGER 12.0f
 #define WAVE_DAMPING_UPPER_TRIGGER 12.0f
+#define WAVE_DAMPING_LOWER_IDLEANIM 7.0f
+#define WAVE_DAMPING_UPPER_IDLEANIM 5.0f
 
 #define NUM_LEDS (WIDTH * HEIGHT * NUMBER_OF_PLAYERS)   // Total number of LEDs
 #define NUM_LEDS_PER_PLAYER (WIDTH) * (HEIGHT)   // Total number of LEDs per stripe (multi strip setup)
@@ -62,7 +68,7 @@
 #define EXTERNAL_TRIGGER_ACTIVE_PERIOD 2000 // Time in milliseconds to override buttons with external triggers (from Serial1)
 
 #define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
-#define USER_ACTIVITY_TIMEOUT 30000 // Time in milliseconds to consider user inactive
+#define USER_ACTIVITY_TIMEOUT 10000 // Time in milliseconds to consider user inactive
 
 // Important: super sampling consumes more RAM and CPU! (2X or 4X result in out-of-memory crashes if full 40x50 matrix is used!!
 #define SUPER_SAMPLE_MODE SuperSample::SUPER_SAMPLE_NONE;  // SUPER_SAMPLE_2X or SUPER_SAMPLE_4X to create smoother waves
