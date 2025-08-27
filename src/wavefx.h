@@ -14,7 +14,7 @@
     #define WIDTH 8             // Number of columns per user
     #define HEIGHT 50           // Number of rows in the matrix
     #define PLAYER_MAX_YPOS 30
-    #define BIGWAVE_YPOS 30
+    #define BIGWAVE_YPOS 40
 	#define LEDSTRIPE_COLOR_LAYOUT RGB
 
     #define WAVE_SPEED_LOWER 0.02f    
