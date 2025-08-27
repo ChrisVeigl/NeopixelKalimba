@@ -14,19 +14,23 @@
 
 #include <math.h>
 
-//#define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
-#define OUTPUT_SIGNAL_TRACES 1     // for testing: display signal traces (serial plotter)
+#define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
+#define OUTPUT_SIGNAL_TRACES 1    // for testing: display signal traces (serial plotter)
 #define NUMBER_OF_PLAYERS 5
 #define SAMPLING_PERIOD 1          // delay for sampling loop (in milliseconds)
 #define REPORTING_PERIOD 10        // send updates to Teensy4.1 and Terminal every 10 ms
 
 #define TRIGGER_SIGNAL_LOWPASS_CUTOFF   35.0f   // cutoff frequency for trigger signal
-#define BASELINE_SIGNAL_LOWPASS_CUTOFF   0.3f   // cutoff frequency for baseline signal
+#define BASELINE_SIGNAL_LOWPASS_CUTOFF   0.8f   // cutoff frequency for baseline signal
 
 #define PIEZO_THRESHOLD 8
+#define FSR_THRESHOLD 40
+
+#define SENSOR_THRESHOLD FSR_THRESHOLD
+
 #define PIEZO_IMPACT_VAL 20
 #define PIEZO_TRIGGER_MAXVALUE 1000
-#define PIEZO_DECAY 5
+#define PIEZO_DECAY 10
 
 // IIR lowpass filter parameters
 
@@ -114,18 +118,13 @@ void loop() {
     int raw=analogRead(A0+i);
     int signal=iir_lowpass2_process(&filterState[i*2],raw);      //  20 Hz LP
     int baseline=iir_lowpass2_process(&filterState[i*2+1],raw);  // 0.5 Hz LP
-    int piezoVal=signal-baseline;
+    int sensorVal=signal-baseline;
 
-    #ifdef ONLY_SHOW_CHANNEL_TRACE
-      static int cnt=0;
-      if (++cnt % 5 == 0) Serial.printf("%d,%d\n",signal, raw);
-      delay(SAMPLING_PERIOD);
-      return;
-    #endif
+    if (ONLY_SHOW_CHANNEL_TRACE && reportNow)  Serial.printf("%d,%d,",signal, baseline);
     
     if (i%2) actTriggerGroup = &trigger2Group; else actTriggerGroup = &trigger1Group;
     
-    if ((piezoVal > PIEZO_THRESHOLD) && (piezoTrigger[i] < PIEZO_TRIGGER_MAXVALUE))
+    if ((sensorVal > SENSOR_THRESHOLD) && (piezoTrigger[i] < PIEZO_TRIGGER_MAXVALUE))
       piezoTrigger[i] += PIEZO_IMPACT_VAL;
   
     if (piezoTrigger[i] > PIEZO_DECAY) {
@@ -143,7 +142,7 @@ void loop() {
   }
   
   if (reportNow) { 
-    if (OUTPUT_SIGNAL_TRACES)  { 
+    if (OUTPUT_SIGNAL_TRACES || ONLY_SHOW_CHANNEL_TRACE )  { 
       // Serial.print(fps); fps=0;
       Serial.println("");  // newline, needed by Serial Plotter
     }
