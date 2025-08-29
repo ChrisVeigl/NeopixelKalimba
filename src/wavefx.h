@@ -2,15 +2,16 @@
 
 #include <FastLED.h>      // Main FastLED library for controlling LEDs
 
-#define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
+// #define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
-// #define USE_RED_GREEN_IDLE_ANIMATION   // define to use the red-green idle animation 
+//#define USE_RED_GREEN_IDLE_ANIMATION   // define to use the red-green idle animation 
 #define PLAY_IDLE_ANIM_NOTES // define to play MIDI notes during idle animation
 
-#define NUMBER_OF_PLAYERS 5 // Number of players (stripes)
 
 // specific parameters for small led-matrix or big matrix (led-curtain)
 #ifdef USE_BIG_MATRIX
+    #define NUMBER_OF_PLAYERS 5 // Number of players (stripes)
+    #define PLANES_PER_PLAYER 1
     #define WIDTH 8             // Number of columns per user
     #define HEIGHT 50           // Number of rows in the matrix
     #define PLAYER_MAX_YPOS 30
@@ -21,12 +22,16 @@
 	#define WAVE_SPEED_UPPER 0.012f
 	#define WAVE_DAMPING_LOWER_RELEASE 6.0f
 	#define WAVE_DAMPING_UPPER_RELEASE 5.0f
+    #define WAVE_DAMPING_LOWER_IDLEANIM 7.0f
+    #define WAVE_DAMPING_UPPER_IDLEANIM 5.0f
 
     #define BLUR_AMOUNT_LOWER 0
     #define BLUR_AMOUNT_UPPER 95
     #define BLUR_PASSES_LOWER 1
     #define BLUR_PASSES_UPPER 1
 #else
+    #define NUMBER_OF_PLAYERS 3 // Number of players (stripes)
+    #define PLANES_PER_PLAYER 2
     #define WIDTH 8
     #define HEIGHT 32
     #define PLAYER_MAX_YPOS 32
@@ -37,6 +42,8 @@
 	#define WAVE_SPEED_UPPER 0.003f
 	#define WAVE_DAMPING_LOWER_RELEASE 10.0f
 	#define WAVE_DAMPING_UPPER_RELEASE 8.0f
+    #define WAVE_DAMPING_LOWER_IDLEANIM 10.0f
+    #define WAVE_DAMPING_UPPER_IDLEANIM 8.0f
 
     #define BLUR_AMOUNT_LOWER 50
     #define BLUR_AMOUNT_UPPER 50
@@ -50,11 +57,9 @@
 #define BIGWAVE_DAMPING_UPPER 10.5f
 #define WAVE_DAMPING_LOWER_TRIGGER 12.0f
 #define WAVE_DAMPING_UPPER_TRIGGER 12.0f
-#define WAVE_DAMPING_LOWER_IDLEANIM 7.0f
-#define WAVE_DAMPING_UPPER_IDLEANIM 5.0f
 
-#define NUM_LEDS (WIDTH * HEIGHT * NUMBER_OF_PLAYERS)   // Total number of LEDs
-#define NUM_LEDS_PER_PLAYER (WIDTH) * (HEIGHT)   // Total number of LEDs per stripe (multi strip setup)
+#define NUM_LEDS (WIDTH * HEIGHT * NUMBER_OF_PLAYERS * PLANES_PER_PLAYER)   // Total number of LEDs
+#define NUM_LEDS_PER_PLANE (WIDTH) * (HEIGHT)   // Total number of LEDs per stripe (multi strip setup)
 #define IS_SERPINTINE true              // Whether the LED strip zigzags back and forth (common in matrix layouts)
 
 #define NEOPIXEL_PIN 8      // First data pin for the LED stripes

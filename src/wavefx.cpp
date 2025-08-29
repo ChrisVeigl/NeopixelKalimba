@@ -36,8 +36,23 @@ uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamp
     XYMap xyMap = XYMap::constructWithLookUpTable(WIDTH*NUMBER_OF_PLAYERS, HEIGHT, XYTable, 0);  // For the actual LED output (may be serpentine)
     XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, false);         // For the wave simulation (always rectangular grid)
 #else
-    XYMap xyMap(WIDTH, HEIGHT, IS_SERPINTINE);  // For the actual LED output (may be serpentine)
-    XYMap xyRect(WIDTH, HEIGHT, false);         // For the wave simulation (always rectangular grid)
+   // Custom mapping function: maps (x, y) to a zigzag (serpentine) linear index
+    uint16_t myXYMapping(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+        uint16_t col = x >> 3;
+        uint16_t add = 256 * col;
+        uint16_t x_ind = x & 0x07;
+
+        if (y%2) x_ind=7-x_ind;
+        uint16_t mapped = y * 8 + x_ind + add;
+
+        return mapped;
+    }
+
+    XYMap xyMap = XYMap::constructWithUserFunction(WIDTH* NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, myXYMapping);
+    XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, false);         // For the wave simulation (always rectangular grid)
+
+
+
 #endif
 
 // Create a blender that will combine the wave effecsts of all players
@@ -99,6 +114,7 @@ struct PlayerData {
     {}
 };
 
+#ifdef USE_BIG_MATRIX
 PlayerData playerArray[NUMBER_OF_PLAYERS] = {
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
@@ -106,6 +122,13 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 3, A0,  41, 40},
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 4, A15, 38, 37 }
 };
+#else 
+PlayerData playerArray[NUMBER_OF_PLAYERS] = {
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, 15},
+};
+#endif
 
 void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
     // Set the speed and dampening for one wave layer
@@ -193,12 +216,7 @@ void triggerWave(int pos, PlayerData * player) {
     int x = random(min_x, max_x);
     int y = pos==-1 ? random(min_y, max_y) : pos;
     
-    #ifdef USE_BIG_MATRIX
-      int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
-    #else
-      // In test mode, use a fixed position for small led matrix
-      int xOffset =0;
-    #endif
+    int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
 
     // Set a wave peak at this position in both wave layers (1.0 represents the maximum height of the wave)
     player->waveLower.setf(x + xOffset, y, 1);  // Create ripple in lower layer
@@ -354,13 +372,16 @@ void wavefx_setup() {
     // TBD: verify correct format for Teensy4.1 5 parallel stripes
     // see: https://github.com/FastLED/FastLED/blob/master/examples/TeensyMassiveParallel/TeensyMassiveParallel.ino
 
-    auto screenmap = xyMap.toScreenMap();
-    //CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812,  8, LEDSTRIPE_COLOR_LAYOUT>( leds, NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812,  9, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*1], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 10, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*2], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 11, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*3], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 12, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLAYER*4], NUM_LEDS_PER_PLAYER).setScreenMap(screenmap);
+    //auto screenmap = xyMap.toScreenMap();
+    //CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLANE).setScreenMap(screenmap);
+    FastLED.addLeds<WS2812,  8, LEDSTRIPE_COLOR_LAYOUT>( leds, NUM_LEDS_PER_PLANE); //.setScreenMap(screenmap);
+    FastLED.addLeds<WS2812,  9, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*1], NUM_LEDS_PER_PLANE); //.setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 10, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*2], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 11, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*3], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
+    FastLED.addLeds<WS2812, 12, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*4], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
+    #ifndef USE_BIG_MATRIX
+        FastLED.addLeds<WS2812, 7,  LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*5], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
+    #endif
 
     // Initialize the color palettes for the wave layers
     WaveCrgbMapPtr palYellowRed, palYellowWhite, palPurpleWhite, palBlueWhite, palDarkGreen, palDarkBlue, palDarkOrange, palDarkRed, palDarkPurple;  // Color palettes for the wave layers
@@ -429,11 +450,15 @@ void wavefx_setup() {
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
     playerArray[2].waveLower.setCrgbMap(palDarkRed);
     playerArray[2].waveUpper.setCrgbMap(palPurpleWhite);
+
+    #ifdef USE_BIG_MATRIX 
     playerArray[3].waveLower.setCrgbMap(palDarkOrange);
     playerArray[3].waveUpper.setCrgbMap(palYellowWhite);
     playerArray[4].waveLower.setCrgbMap(palDarkPurple);
     playerArray[4].waveUpper.setCrgbMap(palBlueWhite);
+    #endif
 
+    
     // Apply global blur settings to the blender
     fxBlend.setGlobalBlurAmount(0);       // Overall blur strength
     fxBlend.setGlobalBlurPasses(1);       // Number of blur passes
