@@ -2,7 +2,7 @@
    Neopixel Kalimba, for Zoom Museum Vienna, 2025
    by Michael Strohmann and Chris Veigl
 
-    This Arduino sketch measures up to 10 Piezo (or FSR) sensors connected to the
+    This Arduino sketch measures up to 10 Piezo- or FSR-sensors connected to the
     Analog Input ports of the Controller. Activity triggers are calculated, so that
     a stronger impact creates a longer on-phase of the trigger value. 
     Trigger values are stored in two bytes (a bit representing a button on/off state) 
@@ -14,8 +14,8 @@
 
 #include <math.h>
 
-#define ONLY_SHOW_CHANNEL_TRACE 0  // only show this ADC channel raw data with high speed sampling (for testing)
-#define OUTPUT_SIGNAL_TRACES 1    // for testing: display signal traces (serial plotter)
+#define SHOW_CHANNEL_TRACES 1     // if 1: show filtered baseline and signal traces in serial plotter (for testing)
+#define SHOW_TRIGGER_SIGNALS 0    // if 1: display signal traces in serial plotter (for testing)
 #define NUMBER_OF_PLAYERS 5
 #define SAMPLING_PERIOD 1          // delay for sampling loop (in milliseconds)
 #define REPORTING_PERIOD 10        // send updates to Teensy4.1 and Terminal every 10 ms
@@ -23,14 +23,14 @@
 #define TRIGGER_SIGNAL_LOWPASS_CUTOFF   35.0f   // cutoff frequency for trigger signal
 #define BASELINE_SIGNAL_LOWPASS_CUTOFF   0.8f   // cutoff frequency for baseline signal
 
-#define PIEZO_THRESHOLD 8
-#define FSR_THRESHOLD 40
+#define SENSOR_THRESHOLD_PIEZO 8
+#define SENSOR_THRESHOLD_FSR 40
 
-#define SENSOR_THRESHOLD FSR_THRESHOLD
+#define SENSOR_THRESHOLD SENSOR_THRESHOLD_FSR   // use appropirate threshold for physical sensor (piezo or FSR)
 
-#define PIEZO_IMPACT_VAL 20
-#define PIEZO_TRIGGER_MAXVALUE 1000
-#define PIEZO_DECAY 10
+#define SENSOR_IMPACT_VAL 20
+#define SENSOR_TRIGGER_MAXVALUE 1000
+#define SENSOR_DECAY 10
 
 // IIR lowpass filter parameters
 
@@ -88,7 +88,7 @@ static inline int iir_lowpass2_process(IIRLowPassState *st, int x) {
 
 IIRLowPassState filterState[NUMBER_OF_PLAYERS * 4];   // 2 triggers per player, 2 signals per trigger
 
-int piezoTrigger[NUMBER_OF_PLAYERS * 2]={0};
+int triggers[NUMBER_OF_PLAYERS * 2]={0};
 uint8_t trigger1Group=0, lastTrigger1Group=0;
 uint8_t trigger2Group=0x80, lastTrigger2Group=0x80;
 
@@ -120,29 +120,29 @@ void loop() {
     int baseline=iir_lowpass2_process(&filterState[i*2+1],raw);  // 0.5 Hz LP
     int sensorVal=signal-baseline;
 
-    if (ONLY_SHOW_CHANNEL_TRACE && reportNow)  Serial.printf("%d,%d,",signal, baseline);
+    if (SHOW_CHANNEL_TRACES && reportNow)  Serial.printf("%d,%d,",signal, baseline);
     
     if (i%2) actTriggerGroup = &trigger2Group; else actTriggerGroup = &trigger1Group;
     
-    if ((sensorVal > SENSOR_THRESHOLD) && (piezoTrigger[i] < PIEZO_TRIGGER_MAXVALUE))
-      piezoTrigger[i] += PIEZO_IMPACT_VAL;
+    if ((sensorVal > SENSOR_THRESHOLD) && (triggers[i] < SENSOR_TRIGGER_MAXVALUE))
+      triggers[i] += SENSOR_IMPACT_VAL;
   
-    if (piezoTrigger[i] > PIEZO_DECAY) {
-      piezoTrigger[i] -= PIEZO_DECAY;
+    if (triggers[i] > SENSOR_DECAY) {
+      triggers[i] -= SENSOR_DECAY;
       *actTriggerGroup |= (1<<(i>>1));
     }
     else {
-      piezoTrigger[i]=0;
+      triggers[i]=0;
       *actTriggerGroup &= ~(1<<(i>>1));
     }
 
-    if (reportNow && OUTPUT_SIGNAL_TRACES) {
-      Serial.print(piezoTrigger[i]); Serial.print(",");
+    if (reportNow && SHOW_TRIGGER_SIGNALS) {
+      Serial.print(triggers[i]); Serial.print(",");
     }
   }
   
   if (reportNow) { 
-    if (OUTPUT_SIGNAL_TRACES || ONLY_SHOW_CHANNEL_TRACE )  { 
+    if (SHOW_TRIGGER_SIGNALS || SHOW_CHANNEL_TRACES )  { 
       // Serial.print(fps); fps=0;
       Serial.println("");  // newline, needed by Serial Plotter
     }
