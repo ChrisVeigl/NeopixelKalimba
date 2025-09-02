@@ -94,7 +94,7 @@ struct PlayerData {
     TimeRamp bigWaveTransition;
     int * tonescale = nullptr;  // Pointer to the current tone scale (if needed)
     int tonescaleSize = 0;
-    int joystickMode = 0;  // 0 = random, 1 = analog stick (used to determine how to interpret the analog input)
+    int joystickMode = JOYSTICK_MODE;  // 0 = random, 1 = analog stick (used to determine how to interpret the analog input)
     uint32_t trigger1Timestamp = 0;  // Timestamp for the last trigger1 event
     uint32_t trigger2Timestamp = 0;  // Timestamp for the last trigger2 event
 
@@ -124,9 +124,9 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
 };
 #else 
 PlayerData playerArray[NUMBER_OF_PLAYERS] = {
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, 15},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, A7},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, A4},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, A1},
 };
 #endif
 
@@ -185,7 +185,7 @@ void playIdleAnimation() {
             }
 
             if (animCounter > 0 && animCounter < duration ) {
-                xPos += xSpeed; if (xPos >= WIDTH*NUMBER_OF_PLAYERS) xPos = 0; if (xPos < 0) xPos = WIDTH*NUMBER_OF_PLAYERS - 1;  // Wrap around horizontally
+                xPos += xSpeed; if (xPos >= WIDTH*PLANES_PER_PLAYER*NUMBER_OF_PLAYERS) xPos = 0; if (xPos < 0) xPos = WIDTH*PLANES_PER_PLAYER*NUMBER_OF_PLAYERS - 1;  // Wrap around horizontally
                 yPos += ySpeed; if (yPos >= HEIGHT) animCounter=duration; // yPos = 0;
                 playerArray[playerId].waveLower.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
                 playerArray[playerId].waveUpper.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
@@ -202,45 +202,43 @@ void playIdleAnimation() {
 
 
 // Create a ripple effect at a random position within the central area of the display
-void triggerWave(int pos, PlayerData * player) {
+void triggerWave(int xPos, int yPos, PlayerData * player) {
+    
+    /*
     // Define a margin percentage to keep ripples away from the edges
     float perc = .15f;
-    
+
     // Calculate the boundaries for the ripple (15% from each edge)
-    uint8_t min_x = perc * WIDTH;          // Left boundary
-    uint8_t max_x = (1 - perc) * WIDTH;    // Right boundary
+    uint8_t min_x = perc * WIDTH * PLANES_PER_PLAYER;          // Left boundary
+    uint8_t max_x = (1 - perc) * WIDTH * PLANES_PER_PLAYER;    // Right boundary
     uint8_t min_y = perc * PLAYER_MAX_YPOS;         // Top boundary
     uint8_t max_y = (1 - perc) * PLAYER_MAX_YPOS;   // Bottom boundary
     
     // Generate a random position within these boundaries
     int x = random(min_x, max_x);
     int y = pos==-1 ? random(min_y, max_y) : pos;
-    
-    int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
+    */
+
+    int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;  // Offset for the player ID to separate wave layers
+    Serial.printf("Triggering ripple at (%d, %d) for player %d\n", xPos, yPos, player->playerId);
 
     // Set a wave peak at this position in both wave layers (1.0 represents the maximum height of the wave)
-    player->waveLower.setf(x + xOffset, y, 1);  // Create ripple in lower layer
-    player->waveUpper.setf(x + xOffset, y, 1);  // Create ripple in upper layer
-    // Serial.printf("Triggering ripple at (%d, %d)\n", x, y);
+    player->waveLower.setf(xPos + xOffset, yPos, TRIGGER_IMPACT_VALUE);  // Create ripple in lower layer
+    player->waveUpper.setf(xPos + xOffset, yPos, TRIGGER_IMPACT_VALUE);  // Create ripple in upper layer
 }
 
 // Create a fancy cross-shaped effect that expands from the center
 void applyBigWave(uint32_t now, PlayerData * player) {
 
-    #ifdef USE_BIG_MATRIX
-      int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
-    #else
-      // In test mode, use a fixed position for small led matrix
-      int xOffset =0;
-    #endif
+    int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;  // Offset for the player ID to separate wave layers
 
     // Find the center of the display
-    int mid_x = WIDTH / 2;
+    int mid_x = WIDTH * PLANES_PER_PLAYER / 2;
     int mid_y = BIGWAVE_YPOS;
     
     // Calculate the maximum distance from center (half the width)
-    int amount = WIDTH / 4;   // /2
-    
+    int amount = WIDTH * PLANES_PER_PLAYER / 4;   // /2
+
     // Calculate the start and end coordinates for the cross
     int start_x = mid_x - amount;  // Leftmost point
     int end_x = mid_x + amount;    // Rightmost point
@@ -296,33 +294,66 @@ void applyBigWave(uint32_t now, PlayerData * player) {
 }
 
 void processPlayers(uint32_t now,PlayerData * player) {
+    static int verticalPosition=0, horizontalPosition=0;
+    static int joystickYValue=0, joystickXValue=0;
+    int trigger1State=HIGH, trigger2State=HIGH;
+    int TONESCALE_BASE=0;
 
-    int trigger1State = digitalRead(player->trigger1Pin);
+    trigger1State = digitalRead(player->trigger1Pin);
     if (now - trigger1FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
         trigger1State= trigger1Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger1 state from external flags
 
-    int trigger2State = digitalRead(player->trigger2Pin);
-    if (now - trigger2FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
-        trigger2State= trigger2Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger2 state from external flags
 
-    int noteControlStickValue = analogRead(player->analogPin);
+    if (player->joystickMode) {
+        joystickYValue = analogRead(player->analogPin);
+        joystickXValue = analogRead(player->trigger2Pin);  // use trigger2 pin for horizontal joystick movement
+        verticalPosition   = (int)map (joystickYValue, 0, 1023, 2, PLAYER_MAX_YPOS);
+        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
 
+        int pitchbend = (int) map (joystickXValue, 1023, 0, -8192, 8191);
+        static int oldPitchBend=0;
+        if (oldPitchBend != pitchbend) {
+            usbMIDI.sendPitchBend(pitchbend, player->playerId+1);       // MIDI channel = player id + 1
+            oldPitchBend = pitchbend;
+        }
+
+        if (trigger1State == LOW) {
+            playerArray->waveLower.addf( horizontalPosition, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
+            playerArray->waveUpper.addf( horizontalPosition, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
+        }
+    } 
+    else { 
+        joystickYValue = random (0,1023);  // if no joystick attached, use random values!
+        joystickXValue = random (0,1023);
+        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
+        trigger2State = digitalRead(player->trigger2Pin);
+        if (now - trigger2FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
+            trigger2State= trigger2Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger2 state from external flags
+    }
+    
     if ((trigger1State == LOW) && (player->trigger1Active == 0)) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger1Timestamp = now;  // remember the timestamp for trigger1
         player->trigger1Active = 1;
-        if (player->joystickMode == 0) noteControlStickValue = random (0,512);  // if no joystick attached, use random value in bottom half!
+
+        if (player->joystickMode) {
+            TONESCALE_BASE=60;
+        } else {
+            TONESCALE_BASE=60-12;
+            verticalPosition  /= 2;
+        }
+
         // Set wave parameters for longer wave duration  
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
-        triggerWave(map (noteControlStickValue, 0, 1023, 2, PLAYER_MAX_YPOS), player);  // create a wave at the determined position
+        triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
         player->trigger1Note = player->tonescaleSize > 0 
-            ? 60 + player->tonescale[map (noteControlStickValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
-            : map (noteControlStickValue, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
+            ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
+            : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
 
-        Serial.printf("Triggering player %d bottom half wave at analog value %d, mapped to note %d\n", player->playerId, noteControlStickValue, player->trigger1Note);
+        Serial.printf("Triggering player %d bottom half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger1Note);
         usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1);       // MIDI channel = player id + 1
     }   
     else if ((trigger1State == HIGH)  && (player->trigger1Active == 1)) {
@@ -337,18 +368,21 @@ void processPlayers(uint32_t now,PlayerData * player) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
-        if (player->joystickMode == 0) noteControlStickValue = random (512,1023);  // if no joystick attached, use random value in top half!
+        
+        TONESCALE_BASE=60+12;
+        verticalPosition  = PLAYER_MAX_YPOS/2 + verticalPosition/2;
+
         // Set wave parameters for longer wave duration  
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
-        triggerWave(map (noteControlStickValue, 0, 1023, 2, PLAYER_MAX_YPOS), player);  // create a wave at the determined position
+        triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
         // Map the analog input to a MIDI note in the defined scale
         player->trigger2Note = player->tonescaleSize > 0 
-            ? 60 + player->tonescale[map (noteControlStickValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
-            : map (noteControlStickValue, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
+            ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
+            : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
 
-        Serial.printf("Triggering Player %d top half wave at analog value %d, mapped to note %d\n", player->playerId, noteControlStickValue, player->trigger2Note);
+        Serial.printf("Triggering Player %d top half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger2Note);
         usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1);  // MIDI channel = player id + 1
     }
     else if ((trigger2State == HIGH) && (player->trigger2Active == 1)) {
