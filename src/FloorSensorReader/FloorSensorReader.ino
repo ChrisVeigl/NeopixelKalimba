@@ -24,7 +24,7 @@
 #define BASELINE_SIGNAL_LOWPASS_CUTOFF   0.8f   // cutoff frequency for baseline signal
 
 #define SENSOR_THRESHOLD_PIEZO 8
-#define SENSOR_THRESHOLD_FSR 40
+#define SENSOR_THRESHOLD_FSR 100
 
 #define SENSOR_THRESHOLD SENSOR_THRESHOLD_FSR   // use appropirate threshold for physical sensor (piezo or FSR)
 
