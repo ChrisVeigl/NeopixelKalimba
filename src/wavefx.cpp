@@ -326,6 +326,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         joystickYValue = random (0,1023);  // if no joystick attached, use random values!
         joystickXValue = random (0,1023);
         horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
+        verticalPosition   = (int)map (joystickYValue, 0, 1023, 5, PLAYER_MAX_YPOS);
         trigger2State = digitalRead(player->trigger2Pin);
         if (now - trigger2FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
             trigger2State= trigger2Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger2 state from external flags
@@ -369,7 +370,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
         
-        TONESCALE_BASE=60+12;
+        TONESCALE_BASE=60;
         verticalPosition  = PLAYER_MAX_YPOS/2 + verticalPosition/2;
 
         // Set wave parameters for longer wave duration  
