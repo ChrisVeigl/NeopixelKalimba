@@ -45,7 +45,7 @@ DEFINE_GRADIENT_PALETTE(purpleWhiteGradientPal){
     0,   0,   0,   0,   // Black (lowest wave height)
     8,   128, 64,  64,  // Green with red tint (very low wave height)
     16,  255, 222, 222, // Pinkish red (low wave height)
-    64,  255, 255, 255, // White (medium wave height)
+    120,  255, 255, 255, // White (medium wave height)   //64
     255, 255, 255, 255  // White (maximum wave height)
 };
 
@@ -67,8 +67,8 @@ DEFINE_GRADIENT_PALETTE(darkGreenGradientPal){
 DEFINE_GRADIENT_PALETTE(yellowWhiteGradientPal){
     0,   0,   0,   0,   // Black (lowest wave height)
     8,   80, 80,  20,  // yellow with red tint (very low wave height)
-    16,  180, 150, 80, // Pinkish red (low wave height)
-    64,  255, 255, 120, // White (medium wave height)
+    16,  180, 150, 40, // Pinkish red (low wave height)
+    120,  255, 255, 255, // White (medium wave height)   //64
     255, 255, 255, 255  // White (maximum wave height)
 };
 
@@ -91,7 +91,7 @@ DEFINE_GRADIENT_PALETTE(blueWhiteGradientPal){
     0,   0,   0,   0,   // Black (lowest wave height)
     8,   128, 64,  64,  // Green with red tint (very low wave height)
     16,  220, 200, 255, // Bluish red (low wave height)
-    64,  255, 255, 255, // White (medium wave height)
+    120,  255, 255, 255, // White (medium wave height)     // 64
     255, 255, 255, 255  // White (maximum wave height)
 };
 
