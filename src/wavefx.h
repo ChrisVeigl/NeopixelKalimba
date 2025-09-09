@@ -2,7 +2,7 @@
 
 #include <FastLED.h>      // Main FastLED library for controlling LEDs
 
-#define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
+// #define USE_BIG_MATRIX          // define to use a 40x50 led matrix (5 parallel stripes of 8x50 LEDs each)
 #define CREATE_DEBUG_OUTPUT     // define to create FPS and free RAM debug output in the serial console
 //#define USE_RED_GREEN_IDLE_ANIMATION   // define to use the red-green idle animation 
 #define PLAY_IDLE_ANIM_NOTES // define to play MIDI notes during idle animation
@@ -10,6 +10,10 @@
 
 // specific parameters for small led-matrix or big matrix (led-curtain)
 #ifdef USE_BIG_MATRIX
+    #define ENABLE_PITCHBEND  0    // 1 enables pitching via horizontal joystick movement, 0 disables it
+    #define ENABLE_TONE_WANDERING 0    // 1 enables tone wandering via vertical joystick movement, 0 disables it
+    #define ENABLE_BIGWAVE  1    // 1 enables big wave effect, 0 disables it
+
     #define NUMBER_OF_PLAYERS 5 // Number of players (stripes)
     #define PLANES_PER_PLAYER 1
     #define WIDTH 8             // Number of columns per user
@@ -38,6 +42,10 @@
     #define JOYSTICK_MODE 0
     #define TRIGGER_IMPACT_VALUE 1
 #else
+    #define ENABLE_PITCHBEND  1    // 1 enables pitching via horizontal joystick movement, 0 disables it
+    #define ENABLE_TONE_WANDERING 0    // 1 enables tone wandering via vertical joystick movement, 0 disables it
+    #define ENABLE_BIGWAVE  0    // 1 enables big wave effect, 0 disables it
+
     #define NUMBER_OF_PLAYERS 3 // Number of players (stripes)
     #define PLANES_PER_PLAYER 2
     #define WIDTH 8
@@ -46,8 +54,8 @@
     #define BIGWAVE_YPOS 16
 	#define LEDSTRIPE_COLOR_LAYOUT GRB
 
-    #define WAVE_SPEED_LOWER 0.02f
-	#define WAVE_SPEED_UPPER 0.012f
+    #define WAVE_SPEED_LOWER 0.03f
+	#define WAVE_SPEED_UPPER 0.02f
 
     #define WAVE_DAMPING_LOWER_TRIGGER 11.0f
     #define WAVE_DAMPING_UPPER_TRIGGER 9.0f
@@ -64,7 +72,7 @@
     #define BLUR_PASSES_UPPER 2
 
     #define JOYSTICK_MODE 1
-    #define TRIGGER_IMPACT_VALUE 0.3f
+    #define TRIGGER_IMPACT_VALUE 0.15f
 #endif
 
 #define BIGWAVE_SPEED_LOWER 0.007f
@@ -79,6 +87,7 @@
 #define NEOPIXEL_PIN 8      // First data pin for the LED stripes
 #define USER_POTI_GND_PIN 25       // user potentiometer ground pin
 #define USER_POTI_SIGNAL_PIN A10   // user potentiometer signal pin
+#define SWITCH_CHANNEL_BUTTON_PIN 30 // first pin for the 3 user buttons to switch midi channels
 
 #define JOYSTICK_MOVEMENT_IMPACT 0.005
 

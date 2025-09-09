@@ -84,6 +84,7 @@ struct PlayerData {
     WaveFx waveUpper;
 
     int playerId;
+    int midiChannel;
     int analogPin;  // Pin for analog input (e.g., potentiometer)
     int trigger1Pin;  // Pin for the button to trigger waves
     int trigger2Pin;  // Pin for the button to trigger big waves
@@ -103,6 +104,7 @@ struct PlayerData {
         : waveLower(xyMap, argsLower),
           waveUpper(xyMap, argsUpper),
           playerId(id),
+          midiChannel(id+1),
           analogPin(pinAnalog),
           trigger1Pin(pinT1),
           trigger2Pin(pinT2),
@@ -297,7 +299,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
     static int verticalPosition=0, horizontalPosition=0;
     static int joystickYValue=0, joystickXValue=0;
     int trigger1State=HIGH, trigger2State=HIGH;
-    int TONESCALE_BASE=0;
+    int TONESCALE_BASE=60;
 
     trigger1State = digitalRead(player->trigger1Pin);
     if (now - trigger1FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
@@ -310,16 +312,30 @@ void processPlayers(uint32_t now,PlayerData * player) {
         verticalPosition   = (int)map (joystickYValue, 0, 1023, 2, PLAYER_MAX_YPOS);
         horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
 
-        int pitchbend = (int) map (joystickXValue, 1023, 0, -8192, 8191);
-        static int oldPitchBend=0;
-        if (oldPitchBend != pitchbend) {
-            usbMIDI.sendPitchBend(pitchbend, player->playerId+1);       // MIDI channel = player id + 1
-            oldPitchBend = pitchbend;
+        if (ENABLE_PITCHBEND) {
+            int pitchbend = (int) map (joystickXValue, 1023, 0, -8192, 8191);
+            static int oldPitchBend=0;
+            if (oldPitchBend != pitchbend) {
+                usbMIDI.sendPitchBend(pitchbend, player->midiChannel);       // MIDI channel = player id + 1
+                oldPitchBend = pitchbend;
+            }
         }
 
         if (trigger1State == LOW) {
-            playerArray->waveLower.addf( horizontalPosition, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
-            playerArray->waveUpper.addf( horizontalPosition, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
+            int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;
+            player->waveLower.addf( horizontalPosition + xOffset, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
+            player->waveUpper.addf( horizontalPosition + xOffset, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
+
+            if (ENABLE_TONE_WANDERING) {
+                int actNote = player->tonescaleSize > 0 
+                ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
+                : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
+                if (actNote != player->trigger1Note) {
+                    if (player->trigger1Note) usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
+                    player->trigger1Note = actNote;
+                    usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);  
+                }
+            }
         }
     } 
     else { 
@@ -337,10 +353,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         player->trigger1Timestamp = now;  // remember the timestamp for trigger1
         player->trigger1Active = 1;
 
-        if (player->joystickMode) {
-            TONESCALE_BASE=60;
-        } else {
-            TONESCALE_BASE=60-12;
+        if (!player->joystickMode) {
             verticalPosition  /= 2;
         }
 
@@ -354,15 +367,19 @@ void processPlayers(uint32_t now,PlayerData * player) {
             ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
             : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
 
+        if (!player->joystickMode) {
+            player->trigger1Note -=12 ;  // lower the note by one octave for trigger1 in random mode
+        }
+
         Serial.printf("Triggering player %d bottom half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger1Note);
-        usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1);       // MIDI channel = player id + 1
+        usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);    
     }   
     else if ((trigger1State == HIGH)  && (player->trigger1Active == 1)) {
         player->trigger1Active = 0;
         // Set wave parameters for faster wave decay
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
-        usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->playerId+1); 
+        usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
     } 
 
     if ((trigger2State == LOW) && (player->trigger2Active == 0)) {
@@ -370,7 +387,6 @@ void processPlayers(uint32_t now,PlayerData * player) {
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
         
-        TONESCALE_BASE=60;
         verticalPosition  = PLAYER_MAX_YPOS/2 + verticalPosition/2;
 
         // Set wave parameters for longer wave duration  
@@ -384,15 +400,27 @@ void processPlayers(uint32_t now,PlayerData * player) {
             : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
 
         Serial.printf("Triggering Player %d top half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger2Note);
-        usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1);  // MIDI channel = player id + 1
+        usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel);  // MIDI channel = player id + 1
     }
     else if ((trigger2State == HIGH) && (player->trigger2Active == 1)) {
         player->trigger2Active = 0;  // Reset fancy button state
         // Set wave parameters for faster wave decay
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
-        usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->playerId+1); 
+        usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel); 
     }
+
+    #ifndef USE_BIG_MATRIX
+        if (digitalRead(SWITCH_CHANNEL_BUTTON_PIN + player->playerId) == LOW) {
+            static uint32_t lastButtonPressTime = 0;
+            if (now - lastButtonPressTime > 1500) {  // Debounce delay
+                usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
+                usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
+                player->midiChannel++; if (player->midiChannel > 5) player->midiChannel = 1; 
+                lastButtonPressTime = now;
+            }
+        }
+    #endif
 }
 
 // Setup function to initialize the wave effects and LED strip
@@ -402,8 +430,13 @@ void wavefx_setup() {
     pinMode (USER_POTI_GND_PIN, OUTPUT);
     digitalWrite(USER_POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
 
+    #ifndef USE_BIG_MATRIX
+        pinMode (SWITCH_CHANNEL_BUTTON_PIN, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
+        pinMode (SWITCH_CHANNEL_BUTTON_PIN+1, INPUT_PULLUP); // Set big button pin as input with pull-up resistor
+        pinMode (SWITCH_CHANNEL_BUTTON_PIN+2, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
+    #endif
 
-    // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
+        // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
     // TBD: verify correct format for Teensy4.1 5 parallel stripes
     // see: https://github.com/FastLED/FastLED/blob/master/examples/TeensyMassiveParallel/TeensyMassiveParallel.ino
 
@@ -522,42 +555,45 @@ void wavefx_loop() {
         processPlayers(now, &playerArray[i]);
     }   
 
-    // Check if timestamps are close enough for bigWaves
-    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
-        PlayerData * player1 = &playerArray[i];
-        for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
-            PlayerData * player2 = &playerArray[j];
 
-            // if timestamps are close
-            if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
-                (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
+    if (ENABLE_BIGWAVE) {
+        // Check if timestamps are close enough for bigWaves
+        for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
+            PlayerData * player1 = &playerArray[i];
+            for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
+                PlayerData * player2 = &playerArray[j];
 
-                // Start big wave animation 
-                player1->bigWaveTransition.trigger(now, 70, 0, 0);
-                player2->bigWaveTransition.trigger(now, 70, 0, 0);
+                // if timestamps are close
+                if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
+                    (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
 
-                // reset the trigger timestamps to avoid re-triggering
-                player1->trigger1Timestamp = player2->trigger1Timestamp = player1->trigger2Timestamp = player2->trigger2Timestamp = 0;
+                    // Start big wave animation 
+                    player1->bigWaveTransition.trigger(now, 70, 0, 0);
+                    player2->bigWaveTransition.trigger(now, 70, 0, 0);
 
-                // Trigger the big wave MIDI notes
-                usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // in case note is still on, turn it off
-                bigwaveNote= 60 + player1->tonescale [bigWaveNoteIndex++ % 7];
-                usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
-                bigWaveRunTime = now;  // Remember the time when the big wave was triggered
+                    // reset the trigger timestamps to avoid re-triggering
+                    player1->trigger1Timestamp = player2->trigger1Timestamp = player1->trigger2Timestamp = player2->trigger2Timestamp = 0;
+
+                    // Trigger the big wave MIDI notes
+                    usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // in case note is still on, turn it off
+                    bigwaveNote= 60 + player1->tonescale [bigWaveNoteIndex++ % 7];
+                    usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
+                    bigWaveRunTime = now;  // Remember the time when the big wave was triggered
+                }
             }
         }
-    }
 
-    for (int i=0; i < NUMBER_OF_PLAYERS; i++) {
-        if (playerArray[i].bigWaveTransition.isActive(now)) {  // Update the big wave transition state
-            Serial.printf("big wave for player %d active!\n", i);
-            applyBigWave(now, &playerArray[i]);
+        for (int i=0; i < NUMBER_OF_PLAYERS; i++) {
+            if (playerArray[i].bigWaveTransition.isActive(now)) {  // Update the big wave transition state
+                Serial.printf("big wave for player %d active!\n", i);
+                applyBigWave(now, &playerArray[i]);
+            }
         }
-    }
 
-    if (bigWaveRunTime > 0 && now - bigWaveRunTime > BIGWAVE_MIDINOTE_DURATION) {
-        bigWaveRunTime = 0;  // Reset the run time
-        usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note off for big wave effect, channel 7
+        if (bigWaveRunTime > 0 && now - bigWaveRunTime > BIGWAVE_MIDINOTE_DURATION) {
+            bigWaveRunTime = 0;  // Reset the run time
+            usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note off for big wave effect, channel 7
+        }
     }
 
     if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
