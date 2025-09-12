@@ -434,6 +434,8 @@ void wavefx_setup() {
         pinMode (SWITCH_CHANNEL_BUTTON_PIN, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
         pinMode (SWITCH_CHANNEL_BUTTON_PIN+1, INPUT_PULLUP); // Set big button pin as input with pull-up resistor
         pinMode (SWITCH_CHANNEL_BUTTON_PIN+2, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
+        pinMode (SWITCH_CHANNEL_BUTTON_PIN-1, OUTPUT);   // Set GND pin for Channel-Switch Buttons as OUTPUT
+        digitalWrite(SWITCH_CHANNEL_BUTTON_PIN-1, LOW);  // Enable GND for Channel-Switch Buttons
     #endif
 
         // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
