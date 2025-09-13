@@ -31,6 +31,11 @@
     const int tonescaleWholeTone[]       = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22}; // Whole tone scale (harmonic combinations)
 #endif  
 
+
+const int kalimbaNotes_team1[] = { 60, 72, 64, 76, 67, 79, 60, 72, 64, 76, 67, 79, 60, 72, 64, 76, 81, 69, 60, 72, 64, 76, 81, 69, 60, 65, 77, 69, 81, 72, 60, 65, 77, 69, 81, 72, 74, 62, 77, 65, 81, 69, 74, 62, 77, 65, 81, 69 , -1};
+const int kalimbaNotes_team2[] = { 60, 72, 64, 69, 67, 65, 71, 62, 67, 65, 64, 69, 60, 72, 64, 69, 67, 65, 71, 62, 67, 65, 64, 69, 60, 76, 64, 72, 67, 69, 74, 65, 71, 69, 67, 72, 60, 76, 64, 72, 67, 69, 74, 65, 71, 69, 67, 72 , -1 };
+const int kalimbaNotes_canon1[] = { 53, 55, 57, 53, 53, 55, 57, 53, 57, 58, 60, 57, 58, 60, 60, 62, 60, 58, 57, 53, 60, 62, 60, 58, 57, 53, 55, 48, 53, 55, 48, 53, -1 };
+
 // Color palettes define the gradient of colors used for the wave effects
 // Each entry has the format: position (0-255), R, G, B
 
