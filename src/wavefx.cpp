@@ -50,9 +50,6 @@ uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamp
 
     XYMap xyMap = XYMap::constructWithUserFunction(WIDTH* NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, myXYMapping);
     XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, false);         // For the wave simulation (always rectangular grid)
-
-
-
 #endif
 
 // Create a blender that will combine the wave effecsts of all players
@@ -126,10 +123,13 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
 };
 #else 
 PlayerData playerArray[NUMBER_OF_PLAYERS] = {
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, A7},
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, A4},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A6,  19, A4},
+    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A9,  22, A7},
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, A1},
 };
+
+    const int switchChannelPinMap[NUMBER_OF_PLAYERS] = {0, 2, 1};  // Pin numbers for channel switch buttons
+
 #endif
 
 void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
@@ -310,7 +310,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         joystickYValue = analogRead(player->analogPin);
         joystickXValue = analogRead(player->trigger2Pin);  // use trigger2 pin for horizontal joystick movement
         verticalPosition   = (int)map (joystickYValue, 0, 1023, 2, PLAYER_MAX_YPOS);
-        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
+        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER) - 2;
 
         if (ENABLE_PITCHBEND) {
             int pitchbend = (int) map (joystickXValue, 1023, 0, -8192, 8191);
@@ -411,9 +411,9 @@ void processPlayers(uint32_t now,PlayerData * player) {
     }
 
     #ifndef USE_BIG_MATRIX
-        if (digitalRead(SWITCH_CHANNEL_BUTTON_PIN + player->playerId) == LOW) {
+        if (digitalRead(SWITCH_CHANNEL_BUTTON_PIN + switchChannelPinMap[player->playerId]) == LOW) {
             static uint32_t lastButtonPressTime = 0;
-            if (now - lastButtonPressTime > 1500) {  // Debounce delay
+            if (now - lastButtonPressTime > 500) {  // Debounce delay
                 usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
                 usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
                 player->midiChannel++; if (player->midiChannel > 5) player->midiChannel = 1; 
@@ -427,8 +427,8 @@ void processPlayers(uint32_t now,PlayerData * player) {
 void wavefx_setup() {
 
     Serial.print("Initial Free Ram = "); Serial.println(freeram());
-    pinMode (USER_POTI_GND_PIN, OUTPUT);
-    digitalWrite(USER_POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
+    pinMode (POTI_GND_PIN, OUTPUT);
+    digitalWrite(POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
 
     #ifndef USE_BIG_MATRIX
         pinMode (SWITCH_CHANNEL_BUTTON_PIN, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
@@ -518,12 +518,12 @@ void wavefx_setup() {
     // Now set player-specific color palettes and tone scales
     playerArray[1].waveLower.setCrgbMap(palDarkGreen);
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
-    playerArray[2].waveLower.setCrgbMap(palDarkRed);
-    playerArray[2].waveUpper.setCrgbMap(palPurpleWhite);
+    playerArray[2].waveLower.setCrgbMap(palDarkOrange);
+    playerArray[2].waveUpper.setCrgbMap(palYellowWhite);
 
     #ifdef USE_BIG_MATRIX 
-    playerArray[3].waveLower.setCrgbMap(palDarkOrange);
-    playerArray[3].waveUpper.setCrgbMap(palYellowWhite);
+    playerArray[3].waveLower.setCrgbMap(palDarkRed);
+    playerArray[3].waveUpper.setCrgbMap(palPurpleWhite);
     playerArray[4].waveLower.setCrgbMap(palDarkPurple);
     playerArray[4].waveUpper.setCrgbMap(palBlueWhite);
     #endif
@@ -616,12 +616,34 @@ void wavefx_loop() {
 
     static int frameCount = 0;  // Frame counter for performance monitoring
     static int frameTime = 0;   // Time taken for the last frame
+    static int potiUpdateTime = 0;   // Time taken for the last potentiometer update
+    static int loudness = 100;  // Current loudness level (0-127)
+    static int mode = 0;
     frameCount++;
+
+
+    if (millis() - potiUpdateTime >= 100) {
+        potiUpdateTime = millis();  // Update last poti read time
+        int act_brightness = map (analogRead(BRIGHTNESS_POTI_PIN), 0, 1023, MAXIMUM_BRIGHTNESS, 1);  // Read brightness from potentiometer
+        FastLED.setBrightness(act_brightness);  // Set the overall brightness (0-255)
+
+        int act_loudness = map (analogRead(LOUDNESS_POTI_PIN), 0, 1023, 120, 0);  // Read loudness from potentiometer
+        if (act_loudness != loudness) {
+            loudness = act_loudness;
+            for (int channel = 1; channel <= 8; channel++) {
+                usbMIDI.sendControlChange(7, loudness, channel);
+            }
+        }
+        int act_mode = map (analogRead(MODE_POTI_PIN), 0, 1023, 4, 0);  // Read mode from potentiometer
+        if (mode != act_mode) {
+            mode = act_mode;
+            Serial.printf(" Changing mode to %d\n", act_mode);
+        }
+    }
+
 
     // If debug output is enabled, print the frame rate and free RAM every second
     if (millis() - frameTime >= 1000) {
-        int act_brightness = map (analogRead(USER_POTI_SIGNAL_PIN), 0, 1023, 0, MAXIMUM_BRIGHTNESS);  // Read brightness from potentiometer
-        FastLED.setBrightness(act_brightness);  // Set the overall brightness (0-255)
         #ifdef CREATE_DEBUG_OUTPUT
             // Every second, print the frame rate
             Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);

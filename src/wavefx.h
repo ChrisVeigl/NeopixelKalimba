@@ -85,8 +85,12 @@
 #define IS_SERPINTINE true              // Whether the LED strip zigzags back and forth (common in matrix layouts)
 
 #define NEOPIXEL_PIN 8      // First data pin for the LED stripes
-#define USER_POTI_GND_PIN 25       // user potentiometer ground pin
-#define USER_POTI_SIGNAL_PIN A10   // user potentiometer signal pin
+#define POTI_GND_PIN 25       // ground pin for potentiometers
+#define BRIGHTNESS_POTI_PIN A10   // brightness potentiometer signal pin
+#define LOUDNESS_POTI_PIN   A12   // loudness potentiometer signal pin
+#define MODE_POTI_PIN       A13   // mode selection potentiometer signal pin
+
+
 #define SWITCH_CHANNEL_BUTTON_PIN 30 // first pin for the 3 user buttons to switch midi channels
 
 #define JOYSTICK_MOVEMENT_IMPACT 0.005
