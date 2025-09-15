@@ -1,10 +1,10 @@
 
 
 /*
-   Neopixel Kalimba, for Zoom Museum Vienna, 2025
-   (c) Michael Strohmann and Chris Veigl
+   Neopixel Cylindronica  (based on the Neopixel Kalimba for Zoom Museum Vienna, 2025)
+   (c) Chris Veigl
 
-   This firmware is based on the FastLED library and the demo for the FxWave2d effect,
+   This firmware uses the FastLED library and the demo for the FxWave2d effect,
    see: https://github.com/FastLED/FastLED/releases
    
 */

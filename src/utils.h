@@ -8,5 +8,6 @@ extern char *__brkval;
 
 int freeram();
 float randomFloat(float min, float max) ;
+int getTonescaleSize(const int* tonescale);
 
 #endif
