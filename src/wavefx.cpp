@@ -18,6 +18,8 @@
 #include "fx/2d/blend.h"     // 2D blending effects between layers
 #include "fx/2d/wave.h"      // 2D wave simulation
 
+#include <Averager.h>  // Include the Averager class for smoothing signal traces
+
 #include "wavefx.h"  // Header file for this sketch
 #include "colors&tonescales.h" // Color definitions and tone scales
 #include "pixelmap.h"  // Pixel mapping for the LED matrix
@@ -32,25 +34,8 @@ uint8_t trigger1Flags, trigger2Flags = 0;  // Flags to indicate if a trigger eve
 uint32_t trigger1FlagsUpdateTime = 0, trigger2FlagsUpdateTime = 0;  // Timestamps for last trigger updates (from Serial1)
 
 // Create mappings between 1D array positions and 2D x,y coordinates
-#ifdef USE_BIG_MATRIX
-    XYMap xyMap = XYMap::constructWithLookUpTable(WIDTH*NUMBER_OF_PLAYERS, HEIGHT, XYTable, 0);  // For the actual LED output (may be serpentine)
-    XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, false);         // For the wave simulation (always rectangular grid)
-#else
-   // Custom mapping function: maps (x, y) to a zigzag (serpentine) linear index
-    uint16_t myXYMapping(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-        uint16_t col = x >> 3;
-        uint16_t add = 256 * col;
-        uint16_t x_ind = x & 0x07;
-
-        if (y%2) x_ind=7-x_ind;
-        uint16_t mapped = y * 8 + x_ind + add;
-
-        return mapped;
-    }
-
-    XYMap xyMap = XYMap::constructWithUserFunction(WIDTH* NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, myXYMapping);
-    XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS * PLANES_PER_PLAYER, HEIGHT, false);         // For the wave simulation (always rectangular grid)
-#endif
+XYMap xyMap = XYMap::constructWithLookUpTable(WIDTH*NUMBER_OF_PLAYERS, HEIGHT, XYTable, 0);  // For the actual LED output (may be serpentine)
+XYMap xyRect(WIDTH * NUMBER_OF_PLAYERS, HEIGHT, false);         // For the wave simulation (always rectangular grid)
 
 // Create a blender that will combine the wave effecsts of all players
 Blend2d fxBlend(xyRect);
@@ -71,8 +56,19 @@ WaveFx bigWaveUpper(xyMap, CreateDefWaveArgs());
 int bigwaveNote = 0;  // MIDI note for big wave effect, will be set later based on player tone scale
 uint32_t bigWaveRunTime = 0;  
 int bigWaveNoteIndex = 0;  // Index for the "travelling" big wave note in the tone scale
+bool bigWaveEnabled = 1;  // Flag to enable/disable big wave effect
+
 uint32_t lastUserActivity=0;  // Timestamp of the last user interaction (button press, wave trigger, etc.)
 int idleAnimNote = 0;  // MIDI note for idle animation, will be set later based on player tone scale
+
+int tonescaleSelection = 0;  // Currently selected tonescale / mode
+const int * autoPlayTonescale = nullptr;  // Pointer to the current tone scale for automatic mode
+int autoPlayTimestamp = 0;  // Timestamp for the last automatic tone scale change
+int autoPlayPos = 0;      // Current Y position for automatic mode
+int teamToneProgress = 0; // Progress through the tone scale for team mode
+
+Averager avgVolumePoti(25);  // Averagers for smoothing volume potentiometer readings
+Averager avgModePoti(25);
 
 
 // Create a player data structure to hold wave layers and user interaction data
@@ -90,11 +86,11 @@ struct PlayerData {
     int trigger1Note;
     int trigger2Note;
     TimeRamp bigWaveTransition;
-    int * tonescale = nullptr;  // Pointer to the current tone scale (if needed)
+    const int * tonescale = nullptr;  // Pointer to the current tone scale
     int tonescaleSize = 0;
-    int joystickMode = JOYSTICK_MODE;  // 0 = random, 1 = analog stick (used to determine how to interpret the analog input)
     uint32_t trigger1Timestamp = 0;  // Timestamp for the last trigger1 event
     uint32_t trigger2Timestamp = 0;  // Timestamp for the last trigger2 event
+    int toneProgress = 0;  // Progress through the tone scale for this player
 
     // Constructor
     PlayerData(const XYMap& xyMap, const WaveFx::Args& argsLower, const WaveFx::Args& argsUpper, int id, int pinAnalog, int pinT1, int pinT2 )
@@ -113,7 +109,6 @@ struct PlayerData {
     {}
 };
 
-#ifdef USE_BIG_MATRIX
 PlayerData playerArray[NUMBER_OF_PLAYERS] = {
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A9,  22, 21},
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A6,  19, 18},
@@ -121,16 +116,6 @@ PlayerData playerArray[NUMBER_OF_PLAYERS] = {
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 3, A0,  41, 40},
     { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 4, A15, 38, 37 }
 };
-#else 
-PlayerData playerArray[NUMBER_OF_PLAYERS] = {
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 0, A6,  19, A4},
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 1, A9,  22, A7},
-    { xyMap, CreateDefWaveArgs(), CreateDefWaveArgs(), 2, A3,  16, A1},
-};
-
-    const int switchChannelPinMap[NUMBER_OF_PLAYERS] = {0, 2, 1};  // Pin numbers for channel switch buttons
-
-#endif
 
 void setWaveParameters( WaveFx & waveLower, float speed, float dampening) {
     // Set the speed and dampening for one wave layer
@@ -181,13 +166,13 @@ void playIdleAnimation() {
                 setWaveParameters(playerArray[playerId].waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_IDLEANIM);
 
                 #ifdef PLAY_IDLE_ANIM_NOTES
-                idleAnimNote = 60 + playerArray[playerId].tonescale [random(0,7)];
+                idleAnimNote = playerArray[playerId].tonescale [random(0,7)];
                 usbMIDI.sendNoteOn(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Send MIDI note for idle animation
                 #endif
             }
 
             if (animCounter > 0 && animCounter < duration ) {
-                xPos += xSpeed; if (xPos >= WIDTH*PLANES_PER_PLAYER*NUMBER_OF_PLAYERS) xPos = 0; if (xPos < 0) xPos = WIDTH*PLANES_PER_PLAYER*NUMBER_OF_PLAYERS - 1;  // Wrap around horizontally
+                xPos += xSpeed; if (xPos >= WIDTH*NUMBER_OF_PLAYERS) xPos = 0; if (xPos < 0) xPos = WIDTH*NUMBER_OF_PLAYERS - 1;  // Wrap around horizontally
                 yPos += ySpeed; if (yPos >= HEIGHT) animCounter=duration; // yPos = 0;
                 playerArray[playerId].waveLower.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
                 playerArray[playerId].waveUpper.addf((int)xPos, (int)yPos, impact);  // Set a wave peak at the current position
@@ -206,22 +191,7 @@ void playIdleAnimation() {
 // Create a ripple effect at a random position within the central area of the display
 void triggerWave(int xPos, int yPos, PlayerData * player) {
     
-    /*
-    // Define a margin percentage to keep ripples away from the edges
-    float perc = .15f;
-
-    // Calculate the boundaries for the ripple (15% from each edge)
-    uint8_t min_x = perc * WIDTH * PLANES_PER_PLAYER;          // Left boundary
-    uint8_t max_x = (1 - perc) * WIDTH * PLANES_PER_PLAYER;    // Right boundary
-    uint8_t min_y = perc * PLAYER_MAX_YPOS;         // Top boundary
-    uint8_t max_y = (1 - perc) * PLAYER_MAX_YPOS;   // Bottom boundary
-    
-    // Generate a random position within these boundaries
-    int x = random(min_x, max_x);
-    int y = pos==-1 ? random(min_y, max_y) : pos;
-    */
-
-    int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;  // Offset for the player ID to separate wave layers
+    int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
     Serial.printf("Triggering ripple at (%d, %d) for player %d\n", xPos, yPos, player->playerId);
 
     // Set a wave peak at this position in both wave layers (1.0 represents the maximum height of the wave)
@@ -232,14 +202,14 @@ void triggerWave(int xPos, int yPos, PlayerData * player) {
 // Create a fancy cross-shaped effect that expands from the center
 void applyBigWave(uint32_t now, PlayerData * player) {
 
-    int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;  // Offset for the player ID to separate wave layers
+    int xOffset = player->playerId * WIDTH;  // Offset for the player ID to separate wave layers
 
     // Find the center of the display
-    int mid_x = WIDTH * PLANES_PER_PLAYER / 2;
+    int mid_x = WIDTH / 2;
     int mid_y = BIGWAVE_YPOS;
     
     // Calculate the maximum distance from center (half the width)
-    int amount = WIDTH * PLANES_PER_PLAYER / 4;   // /2
+    int amount = WIDTH  / 4;
 
     // Calculate the start and end coordinates for the cross
     int start_x = mid_x - amount;  // Leftmost point
@@ -297,64 +267,44 @@ void applyBigWave(uint32_t now, PlayerData * player) {
 
 void processPlayers(uint32_t now,PlayerData * player) {
     static int verticalPosition=0, horizontalPosition=0;
-    static int joystickYValue=0, joystickXValue=0;
+    static int triggerYValue=0, triggerXValue=0;
     int trigger1State=HIGH, trigger2State=HIGH;
-    int TONESCALE_BASE=60;
+
+    // handle trigger1 
 
     trigger1State = digitalRead(player->trigger1Pin);
     if (now - trigger1FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
         trigger1State= trigger1Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger1 state from external flags
-
-
-    if (player->joystickMode) {
-        joystickYValue = analogRead(player->analogPin);
-        joystickXValue = analogRead(player->trigger2Pin);  // use trigger2 pin for horizontal joystick movement
-        verticalPosition   = (int)map (joystickYValue, 0, 1023, 2, PLAYER_MAX_YPOS);
-        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER) - 2;
-
-        if (ENABLE_PITCHBEND) {
-            int pitchbend = (int) map (joystickXValue, 1023, 0, -8192, 8191);
-            static int oldPitchBend=0;
-            if (oldPitchBend != pitchbend) {
-                usbMIDI.sendPitchBend(pitchbend, player->midiChannel);       // MIDI channel = player id + 1
-                oldPitchBend = pitchbend;
-            }
-        }
-
-        if (trigger1State == LOW) {
-            int xOffset = player->playerId * WIDTH * PLANES_PER_PLAYER;
-            player->waveLower.addf( horizontalPosition + xOffset, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
-            player->waveUpper.addf( horizontalPosition + xOffset, verticalPosition, JOYSTICK_MOVEMENT_IMPACT);
-
-            if (ENABLE_TONE_WANDERING) {
-                int actNote = player->tonescaleSize > 0 
-                ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
-                : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
-                if (actNote != player->trigger1Note) {
-                    if (player->trigger1Note) usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
-                    player->trigger1Note = actNote;
-                    usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);  
-                }
-            }
-        }
-    } 
-    else { 
-        joystickYValue = random (0,1023);  // if no joystick attached, use random values!
-        joystickXValue = random (0,1023);
-        horizontalPosition = (int)map (joystickXValue, 1023, 0, 2, WIDTH * PLANES_PER_PLAYER);
-        verticalPosition   = (int)map (joystickYValue, 0, 1023, 5, PLAYER_MAX_YPOS);
-        trigger2State = digitalRead(player->trigger2Pin);
-        if (now - trigger2FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
-            trigger2State= trigger2Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger2 state from external flags
-    }
     
     if ((trigger1State == LOW) && (player->trigger1Active == 0)) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger1Timestamp = now;  // remember the timestamp for trigger1
         player->trigger1Active = 1;
+        triggerXValue = random (0,1023);
+        horizontalPosition = (int)map (triggerXValue, 1023, 0, 2, WIDTH );
 
-        if (!player->joystickMode) {
-            verticalPosition  /= 2;
+        switch (tonescales[tonescaleSelection].mode)
+        {
+            case MODE_RANDOM:
+                triggerYValue = random (0,1023);  //  use random values!
+                verticalPosition   = (int)map (triggerYValue, 0, 1023, 5, PLAYER_MAX_YPOS/2);  // use bottom half of the display for trigger1
+                player->trigger1Note = player->tonescale[map (triggerYValue, 0, 1023, 0, player->tonescaleSize - 1)];  // Map to a note in the scale
+                player->trigger1Note -=12 ;  // lower the note by one octave for trigger1            
+                break;
+
+            case MODE_TEAM:
+                player->trigger1Note = player->tonescale[teamToneProgress % player->tonescaleSize];  // Map to a note in the scale
+                teamToneProgress++;
+                if (teamToneProgress >= player->tonescaleSize) teamToneProgress = 0;
+                verticalPosition = map (player->trigger1Note, getMinTone(player->tonescale), getMaxTone(player->tonescale), 5, PLAYER_MAX_YPOS);
+                break;
+
+            case MODE_CANON:
+                player->trigger1Note = player->tonescale[player->toneProgress % player->tonescaleSize];  // Map to a note in the scale
+                player->toneProgress++;
+                if (player->toneProgress >= player->tonescaleSize) player->toneProgress = 0;
+                verticalPosition = map (player->trigger1Note, getMinTone(player->tonescale), getMaxTone(player->tonescale), 5, PLAYER_MAX_YPOS);
+                break;
         }
 
         // Set wave parameters for longer wave duration  
@@ -362,16 +312,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
-        // Map the analog input to a MIDI note in the defined scale
-        player->trigger1Note = player->tonescaleSize > 0 
-            ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
-            : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
-
-        if (!player->joystickMode) {
-            player->trigger1Note -=12 ;  // lower the note by one octave for trigger1 in random mode
-        }
-
-        Serial.printf("Triggering player %d bottom half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger1Note);
+        Serial.printf("Player %d trigger1 wave at position %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger1Note);
         usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);    
     }   
     else if ((trigger1State == HIGH)  && (player->trigger1Active == 1)) {
@@ -379,27 +320,52 @@ void processPlayers(uint32_t now,PlayerData * player) {
         // Set wave parameters for faster wave decay
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
-        usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
-    } 
+        usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);
+    }
+
+
+    // handle trigger2
+
+    trigger2State = digitalRead(player->trigger2Pin);
+    if (now - trigger2FlagsUpdateTime < EXTERNAL_TRIGGER_ACTIVE_PERIOD) 
+        trigger2State= trigger2Flags & (1 << (player->playerId)) ? LOW : HIGH;  // Read trigger2 state from external flags
 
     if ((trigger2State == LOW) && (player->trigger2Active == 0)) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
-        
-        verticalPosition  = PLAYER_MAX_YPOS/2 + verticalPosition/2;
+        triggerXValue = random (0,1023);
+        horizontalPosition = (int)map (triggerXValue, 1023, 0, 2, WIDTH );
+
+        switch (tonescales[tonescaleSelection].mode)
+        {
+            case MODE_RANDOM:
+                triggerYValue = random (0,1023);  //  use random values!
+                verticalPosition   = (int)map (triggerYValue, 0, 1023, PLAYER_MAX_YPOS/2, PLAYER_MAX_YPOS);  // use top half of the display for trigger2
+                player->trigger2Note = player->tonescale[map (triggerYValue, 0, 1023, 0, player->tonescaleSize - 1)];  // Map to a note in the scale
+                break;
+
+            case MODE_TEAM:
+                player->trigger2Note = player->tonescale[teamToneProgress % player->tonescaleSize];  // Map to a note in the scale
+                teamToneProgress++;
+                if (teamToneProgress >= player->tonescaleSize) teamToneProgress = 0;
+                verticalPosition = map (player->trigger2Note, getMinTone(player->tonescale), getMaxTone(player->tonescale), 5, PLAYER_MAX_YPOS);
+                break;
+
+            case MODE_CANON:
+                player->trigger2Note = player->tonescale[player->toneProgress % player->tonescaleSize];  // Map to a note in the scale
+                player->toneProgress++;
+                if (player->toneProgress >= player->tonescaleSize) player->toneProgress = 0;
+                verticalPosition = map (player->trigger2Note, getMinTone(player->tonescale), getMaxTone(player->tonescale), 5, PLAYER_MAX_YPOS);
+                break;
+        }
 
         // Set wave parameters for longer wave duration  
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_TRIGGER);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
-        // Map the analog input to a MIDI note in the defined scale
-        player->trigger2Note = player->tonescaleSize > 0 
-            ? TONESCALE_BASE + player->tonescale[map (joystickYValue, 0, 1023, 0, player->tonescaleSize - 1)]  // Map to a note in the scale
-            : map (verticalPosition, 0, 1023, 10, 90);  // take all midi tones in range 10-90 if no scale is defined
-
-        Serial.printf("Triggering Player %d top half wave at analog value %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger2Note);
+        Serial.printf("Player %d trigger2 wave at position %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger2Note);
         usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel);  // MIDI channel = player id + 1
     }
     else if ((trigger2State == HIGH) && (player->trigger2Active == 1)) {
@@ -407,21 +373,174 @@ void processPlayers(uint32_t now,PlayerData * player) {
         // Set wave parameters for faster wave decay
         setWaveParameters(player->waveLower, WAVE_SPEED_LOWER, WAVE_DAMPING_LOWER_RELEASE);
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
-        usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel); 
+        usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel);
     }
+}
 
-    #ifndef USE_BIG_MATRIX
-        if (digitalRead(SWITCH_CHANNEL_BUTTON_PIN + switchChannelPinMap[player->playerId]) == LOW) {
-            static uint32_t lastButtonPressTime = 0;
-            if (now - lastButtonPressTime > 500) {  // Debounce delay
-                usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
-                usbMIDI.sendNoteOff(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel); 
-                player->midiChannel++; if (player->midiChannel > 5) player->midiChannel = 1; 
-                lastButtonPressTime = now;
+void processBigWaves(unsigned long now) {
+    // Check if timestamps are close enough for bigWaves
+    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
+        PlayerData * player1 = &playerArray[i];
+        for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
+            PlayerData * player2 = &playerArray[j];
+
+            // if timestamps are close
+            if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
+                (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
+
+                // Start big wave animation 
+                player1->bigWaveTransition.trigger(now, 70, 0, 0);
+                player2->bigWaveTransition.trigger(now, 70, 0, 0);
+
+                // reset the trigger timestamps to avoid re-triggering
+                player1->trigger1Timestamp = player2->trigger1Timestamp = player1->trigger2Timestamp = player2->trigger2Timestamp = 0;
+
+                // Trigger the big wave MIDI notes
+                usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, BIGWAVE_MIDI_CHANNEL);  // in case note is still on, turn it off
+                bigwaveNote= player1->tonescale [bigWaveNoteIndex++ % 7];
+                usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, BIGWAVE_MIDI_CHANNEL);  // Send MIDI note for big wave effect
+                bigWaveRunTime = now;  // Remember the time when the big wave was triggered
             }
         }
+    }
+
+    for (int i=0; i < NUMBER_OF_PLAYERS; i++) {
+        if (playerArray[i].bigWaveTransition.isActive(now)) {  // Update the big wave transition state
+            Serial.printf("big wave for player %d active!\n", i);
+            applyBigWave(now, &playerArray[i]);
+        }
+    }
+
+    if (bigWaveRunTime > 0 && now - bigWaveRunTime > BIGWAVE_MIDINOTE_DURATION) {
+        bigWaveRunTime = 0;  // Reset the run time
+        usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, BIGWAVE_MIDI_CHANNEL);  // Send MIDI note off for big wave effect
+    }
+}
+
+
+void updatePotentiometers(unsigned long now) {
+    static int potiUpdateTime = 0;   // Time taken for the last potentiometer update
+    // static int volume = 100;   // Current volume level (0-127)
+    // static int oldVolumeValue = -1;      // Previous volume potentiometer value for change detection
+    static int oldModeValue = -1;        // Previous mode potentiometer value for change detection
+
+    if (millis() - potiUpdateTime >= POTENTIOMETER_UPDATE_PERIOD) {
+        potiUpdateTime = millis();  // Update last poti read time
+
+        // int volumeValue = avgVolumePoti.process(analogRead(VOLUME_POTI_PIN));
+        int modeValue = avgModePoti.process(analogRead(MODE_POTI_PIN));
+
+        static int counter=0;
+        counter += POTENTIOMETER_UPDATE_PERIOD;
+        if (counter >= POTENTIOMENTER_UI_UPDATE_PERIOD) {  
+            counter=0;
+
+            // volume control (is currently disabled)
+            /*    
+            if (abs(volumeValue - oldVolumeValue) > 10) {
+                oldVolumeValue = volumeValue;
+                int act_volume = map (volumeValue, 0, 1023, 120, 0);  // Read volume from potentiometer
+                if (act_volume != volume) {
+                    volume = act_volume;
+                    Serial.printf(" Changing volume to %d\n", act_volume);
+                    for (int channel = 1; channel <= 8; channel++) {
+                        usbMIDI.sendControlChange(7, volume, channel);
+                    }
+                }
+            }
+                */
+
+            // mode / tonescale control
+            if (abs(modeValue - oldModeValue) > POTENTIOMETER_NOISE_THRESHOLD) {
+                oldModeValue = modeValue;
+                int act_tonescaleSelection = map (modeValue, 0, 1023, numTonescales-1, 0);  // Read mode from potentiometer
+                if (tonescaleSelection != act_tonescaleSelection) {
+                    tonescaleSelection = act_tonescaleSelection;
+                    Serial.printf(" Changing tonescale to %s\n", tonescales[tonescaleSelection].name);
+
+                    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
+                        PlayerData * player = &playerArray[i];
+                        player->tonescale = tonescales[tonescaleSelection].tonescale;
+                        player->tonescaleSize = getTonescaleSize(player->tonescale);
+                        player->toneProgress = 0;
+                    }
+                    teamToneProgress = 0;
+                    autoPlayTonescale = tonescales[tonescaleSelection].tonescale;
+                    autoPlayTimestamp = now;
+                    autoPlayPos = 0;
+
+                    // update big wave mode
+                    if (tonescales[tonescaleSelection].mode == MODE_RANDOM) {
+                        bigWaveEnabled = true;
+                    } else {
+                        bigWaveEnabled = false;
+                    }   
+                }
+            }
+        }
+    }
+}
+
+
+void handleAutoPlay(unsigned long now) {
+     // Play automatic tonescale preview if tonescale has been changed
+    if (autoPlayTonescale != nullptr && now - autoPlayTimestamp > AUTO_PLAY_TONESCALE_CHANGE_INTERVAL) {
+        autoPlayTimestamp = now;
+        static int lastAutoplayNote = 0;
+        if (lastAutoplayNote)
+            usbMIDI.sendNoteOff(lastAutoplayNote, MIDINOTE_VELOCITY, MIDI_CHANNEL_FOR_PREVIEW);  // in case note is still on, turn it off
+
+        if ((*autoPlayTonescale >= 0) && (autoPlayPos < AUTO_PLAY_PREVIEW_TONES))  // If there are still notes in the scale or we haven't reached the bottom yet
+        {
+            int note = *autoPlayTonescale;
+            usbMIDI.sendNoteOn(note, MIDINOTE_VELOCITY, MIDI_CHANNEL_FOR_PREVIEW);  // Send preview notes on channel 3
+            lastAutoplayNote = note;
+            autoPlayTonescale++;
+            autoPlayPos++;
+        }
+        else { 
+            autoPlayTonescale = nullptr; 
+            lastAutoplayNote = 0;
+            autoPlayPos = 0;
+        }
+    }
+}
+
+void handleIdleAnimation(unsigned long now) {
+    // process idle animation
+    if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
+        playIdleAnimation();  // Play idle animation if no user activity for a while
+    } else {
+        if (idleAnimNote != 0) {  // If idle animation note is set, turn it off!
+            usbMIDI.sendNoteOff(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Stop the MIDI note for idle animation
+            idleAnimNote = 0;  // Reset the idle animation note
+        }
+    }
+    #ifndef USE_RED_GREEN_IDLE_ANIMATION
+        Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
+        fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
     #endif
 }
+
+void monitorPerformance() {
+    static int frameCount = 0;  // Frame counter for performance monitoring
+    static int frameTime = 0;   // Time taken for the last frame
+    frameCount++;
+
+    // If debug output is enabled, print the frame rate and free RAM every second
+    if (millis() - frameTime >= 1000) {
+        #ifdef CREATE_DEBUG_OUTPUT
+            // Every second, print the frame rate
+            Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);
+        #endif
+
+        frameCount = 0;  // Reset frame counter
+        frameTime = millis();  // Update last frame time
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Setup function to initialize the wave effects and LED strip
 void wavefx_setup() {
@@ -430,28 +549,15 @@ void wavefx_setup() {
     pinMode (POTI_GND_PIN, OUTPUT);
     digitalWrite(POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
 
-    #ifndef USE_BIG_MATRIX
-        pinMode (SWITCH_CHANNEL_BUTTON_PIN, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
-        pinMode (SWITCH_CHANNEL_BUTTON_PIN+1, INPUT_PULLUP); // Set big button pin as input with pull-up resistor
-        pinMode (SWITCH_CHANNEL_BUTTON_PIN+2, INPUT_PULLUP);    // Set button pin as input with pull-up resistor
-        pinMode (SWITCH_CHANNEL_BUTTON_PIN-1, OUTPUT);   // Set GND pin for Channel-Switch Buttons as OUTPUT
-        digitalWrite(SWITCH_CHANNEL_BUTTON_PIN-1, LOW);  // Enable GND for Channel-Switch Buttons
-    #endif
-
-        // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
-    // TBD: verify correct format for Teensy4.1 5 parallel stripes
+    // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
     // see: https://github.com/FastLED/FastLED/blob/master/examples/TeensyMassiveParallel/TeensyMassiveParallel.ino
 
-    //auto screenmap = xyMap.toScreenMap();
-    //CLEDController& c1 = FastLED.addLeds<WS2812, 8, GRB>(leds, NUM_LEDS_PER_PLANE).setScreenMap(screenmap);
-    FastLED.addLeds<WS2812,  8, LEDSTRIPE_COLOR_LAYOUT>( leds, NUM_LEDS_PER_PLANE); //.setScreenMap(screenmap);
-    FastLED.addLeds<WS2812,  9, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*1], NUM_LEDS_PER_PLANE); //.setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 10, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*2], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 11, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*3], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
-    FastLED.addLeds<WS2812, 12, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*4], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
-    #ifndef USE_BIG_MATRIX
-        FastLED.addLeds<WS2812, 7,  LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*5], NUM_LEDS_PER_PLANE); //setScreenMap(screenmap);
-    #endif
+    FastLED.addLeds<WS2812,  8, LEDSTRIPE_COLOR_LAYOUT>( leds, NUM_LEDS_PER_PLANE);
+    FastLED.addLeds<WS2812,  9, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*1], NUM_LEDS_PER_PLANE);
+    FastLED.addLeds<WS2812, 10, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*2], NUM_LEDS_PER_PLANE);
+    FastLED.addLeds<WS2812, 11, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*3], NUM_LEDS_PER_PLANE);
+    FastLED.addLeds<WS2812, 12, LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*4], NUM_LEDS_PER_PLANE);
+    FastLED.addLeds<WS2812, 7,  LEDSTRIPE_COLOR_LAYOUT>(&leds[NUM_LEDS_PER_PLANE*5], NUM_LEDS_PER_PLANE);
 
     // Initialize the color palettes for the wave layers
     WaveCrgbMapPtr palYellowRed, palYellowWhite, palPurpleWhite, palBlueWhite, palDarkGreen, palDarkBlue, palDarkOrange, palDarkRed, palDarkPurple;  // Color palettes for the wave layers
@@ -520,21 +626,18 @@ void wavefx_setup() {
     playerArray[1].waveUpper.setCrgbMap(palYellowWhite);
     playerArray[2].waveLower.setCrgbMap(palDarkOrange);
     playerArray[2].waveUpper.setCrgbMap(palYellowWhite);
-
-    #ifdef USE_BIG_MATRIX 
     playerArray[3].waveLower.setCrgbMap(palDarkRed);
     playerArray[3].waveUpper.setCrgbMap(palPurpleWhite);
     playerArray[4].waveLower.setCrgbMap(palDarkPurple);
     playerArray[4].waveUpper.setCrgbMap(palBlueWhite);
-    #endif
-
     
     // Apply global blur settings to the blender
     fxBlend.setGlobalBlurAmount(0);       // Overall blur strength
     fxBlend.setGlobalBlurPasses(1);       // Number of blur passes
 
-    FastLED.setBrightness(20);  // Default brightness for the LED strip
+    FastLED.setBrightness(MAXIMUM_BRIGHTNESS);  // Default brightness for the LED strip
 }
+
 
 void wavefx_loop() {
     uint32_t now = millis();
@@ -553,112 +656,16 @@ void wavefx_loop() {
     }
 
     // Apply current settings and get button states for all players
-    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
-        processPlayers(now, &playerArray[i]);
-    }   
+    for (int i = 0; i < NUMBER_OF_PLAYERS; i++)   
+        processPlayers(now, &playerArray[i]);   
+    
+    updatePotentiometers(now);   // update potentiometers for user settings
+    handleAutoPlay(now);         // play automatic tonescale preview if tonescale has been changed
+    handleIdleAnimation(now);    // handle / update idle animation
+    if (bigWaveEnabled) processBigWaves(now); // process big waves if enabled
 
-
-    if (ENABLE_BIGWAVE) {
-        // Check if timestamps are close enough for bigWaves
-        for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
-            PlayerData * player1 = &playerArray[i];
-            for (int j = i+1; j < NUMBER_OF_PLAYERS; j++) {
-                PlayerData * player2 = &playerArray[j];
-
-                // if timestamps are close
-                if ((player1->trigger1Timestamp!=0 && player2->trigger1Timestamp!=0 && abs((long)(player1->trigger1Timestamp - player2->trigger1Timestamp)) < BIGWAVE_TIME_THRESHOLD) ||
-                    (player1->trigger2Timestamp!=0 && player2->trigger2Timestamp!=0 && abs((long)(player1->trigger2Timestamp - player2->trigger2Timestamp)) < BIGWAVE_TIME_THRESHOLD)) {
-
-                    // Start big wave animation 
-                    player1->bigWaveTransition.trigger(now, 70, 0, 0);
-                    player2->bigWaveTransition.trigger(now, 70, 0, 0);
-
-                    // reset the trigger timestamps to avoid re-triggering
-                    player1->trigger1Timestamp = player2->trigger1Timestamp = player1->trigger2Timestamp = player2->trigger2Timestamp = 0;
-
-                    // Trigger the big wave MIDI notes
-                    usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // in case note is still on, turn it off
-                    bigwaveNote= 60 + player1->tonescale [bigWaveNoteIndex++ % 7];
-                    usbMIDI.sendNoteOn(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note for big wave effect, channel 7
-                    bigWaveRunTime = now;  // Remember the time when the big wave was triggered
-                }
-            }
-        }
-
-        for (int i=0; i < NUMBER_OF_PLAYERS; i++) {
-            if (playerArray[i].bigWaveTransition.isActive(now)) {  // Update the big wave transition state
-                Serial.printf("big wave for player %d active!\n", i);
-                applyBigWave(now, &playerArray[i]);
-            }
-        }
-
-        if (bigWaveRunTime > 0 && now - bigWaveRunTime > BIGWAVE_MIDINOTE_DURATION) {
-            bigWaveRunTime = 0;  // Reset the run time
-            usbMIDI.sendNoteOff(bigwaveNote, MIDINOTE_VELOCITY, 7);  // Send MIDI note off for big wave effect, channel 7
-        }
-    }
-
-    if (now - lastUserActivity > USER_ACTIVITY_TIMEOUT) {
-        playIdleAnimation();  // Play idle animation if no user activity for a while
-    } else {
-        if (idleAnimNote != 0) {  // If idle animation note is set, turn it off!
-            usbMIDI.sendNoteOff(idleAnimNote, MIDINOTE_VELOCITY, 8);  // Stop the MIDI note for idle animation
-            idleAnimNote = 0;  // Reset the idle animation note
-        }
-    }
-
-    #ifndef USE_RED_GREEN_IDLE_ANIMATION
-        Fx::DrawContext ctx(now, leds); // Create a drawing context with the current time and LED array
-        fxBlend.draw(ctx);      // Draw the blended result of both wave layers to the LED array
-    #endif
-
-    FastLED.show();         // Send the color data to the actual LEDs
-
-    static int frameCount = 0;  // Frame counter for performance monitoring
-    static int frameTime = 0;   // Time taken for the last frame
-    static int potiUpdateTime = 0;   // Time taken for the last potentiometer update
-    static int loudness = 100;  // Current loudness level (0-127)
-    static int mode = 0;
-    frameCount++;
-
-
-    if (millis() - potiUpdateTime >= 100) {
-        potiUpdateTime = millis();  // Update last poti read time
-        int act_brightness = map (analogRead(BRIGHTNESS_POTI_PIN), 0, 1023, MAXIMUM_BRIGHTNESS, 1);  // Read brightness from potentiometer
-        FastLED.setBrightness(act_brightness);  // Set the overall brightness (0-255)
-
-        int act_loudness = map (analogRead(LOUDNESS_POTI_PIN), 0, 1023, 120, 0);  // Read loudness from potentiometer
-        if (act_loudness != loudness) {
-            loudness = act_loudness;
-            for (int channel = 1; channel <= 8; channel++) {
-                usbMIDI.sendControlChange(7, loudness, channel);
-            }
-        }
-        int act_mode = map (analogRead(MODE_POTI_PIN), 0, 1023, 4, 0);  // Read mode from potentiometer
-        if (mode != act_mode) {
-            mode = act_mode;
-            Serial.printf(" Changing mode to %d\n", act_mode);
-        }
-    }
-
-
-    // If debug output is enabled, print the frame rate and free RAM every second
-    if (millis() - frameTime >= 1000) {
-        #ifdef CREATE_DEBUG_OUTPUT
-            // Every second, print the frame rate
-            Serial.printf("FPS: %d, Free Ram = %d, PixelPin=%d\n", frameCount, freeram(), NEOPIXEL_PIN);
-        #endif
-
-        frameCount = 0;  // Reset frame counter
-        frameTime = millis();  // Update last frame time
-    }
+    FastLED.show();              // send the color data to the actual LEDs
+    monitorPerformance();
 }
 
 
-/*
-    // Example of how to send MIDI program change messages to change the instrument
-    instrument = (instrument + 1) % 10; // Cycle through instruments 0-9
-    usbMIDI.sendProgramChange(instrument, 1);
-    usbMIDI.sendControlChange(0, instrument, 1);  // Bank Select MSB = 1
-    usbMIDI.sendControlChange(32, 0, 1); // Bank Select LSB = 0
-*/

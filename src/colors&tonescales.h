@@ -8,33 +8,35 @@
 #include <wavefx.h>
 
 // Tone scales, define the MIDI note offsets for different musical scales
-
-#ifdef USE_BIG_MATRIX   
-    const int tonescaleChromatic[]       = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};     // chromatic scale
-    const int tonescaleMajor[]           = {0, 2, 4, 5, 7, 9, 11};  // Major scale extended to 12 notes
-    const int tonescaleMinorNatural[]    = {0, 2, 3, 5, 7, 8, 10};  // Natural minor scale extended to 12 notes
-    const int tonescaleMinorHarmonic[]   = {0, 2, 3, 5, 7, 8, 11};  // Harmonic minor scale extended to 12 notes
-    const int tonescaleMinorMelodic[]    = {0, 2, 3, 5, 7, 9, 11};  // Melodic minor scale extended to 12 notes
-    const int tonescalePentatonicMajor[] = {0, 2, 4, 7, 9, 12};  // Pentatonic major scale extended to 12 notes
-    const int tonescalePentatonicMinor[] = {0, 3, 5, 7, 10, 12};  // Pentatonic minor scale extended to 12 notes
-    const int tonescaleBlues[]           = {0, 3, 5, 6, 7, 10, 12};   // Blues scale extended to 12 notes
-    const int tonescaleWholeTone[]       = {0, 2, 4, 6, 8, 10, 12}; // Whole tone scale (harmonic combinations)
-#else
-    const int tonescaleChromatic[]       = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};     // chromatic scale
-    const int tonescaleMajor[]           = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19};  // Major scale extended to 12 notes
-    const int tonescaleMinorNatural[]    = {0, 2, 3, 5, 7, 8, 10, 12, 14, 15, 17, 19};  // Natural minor scale extended to 12 notes
-    const int tonescaleMinorHarmonic[]   = {0, 2, 3, 5, 7, 8, 11, 12, 14, 15, 18, 19};  // Harmonic minor scale extended to 12 notes
-    const int tonescaleMinorMelodic[]    = {0, 2, 3, 5, 7, 9, 11, 12, 14, 15, 17, 19};  // Melodic minor scale extended to 12 notes
-    const int tonescalePentatonicMajor[] = {0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26};  // Pentatonic major scale extended to 12 notes
-    const int tonescalePentatonicMinor[] = {0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24, 27};  // Pentatonic minor scale extended to 12 notes
-    const int tonescaleBlues[]           = {0, 3, 5, 6, 7, 10, 12, 15, 17, 18, 19, 22};   // Blues scale extended to 12 notes
-    const int tonescaleWholeTone[]       = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22}; // Whole tone scale (harmonic combinations)
-#endif  
-
+const int tonescaleChromatic[]       = {60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, -1};     // chromatic scale
+const int tonescaleMajor[]           = {60, 62, 64, 65, 67, 69, 71, -1};  // Major scale extended to 12 notes
+const int tonescaleMinorNatural[]    = {60, 62, 63, 65, 67, 68, 70, -1};  // Natural minor scale extended to 12 notes
+const int tonescaleMinorHarmonic[]   = {60, 62, 63, 65, 67, 68, 71, -1};  // Harmonic minor scale extended to 12 notes
+const int tonescaleMinorMelodic[]    = {60, 62, 63, 65, 67, 69, 71, -1};  // Melodic minor scale extended to 12 notes
+const int tonescalePentatonicMajor[] = {60, 62, 64, 67, 69, 72, -1};      // Pentatonic major scale extended to 12 notes
+const int tonescalePentatonicMinor[] = {60, 63, 65, 67, 70, 72, -1};      // Pentatonic minor scale extended to 12 notes
+const int tonescaleBlues[]           = {60, 63, 65, 66, 67, 70, 72, -1};  // Blues scale extended to 12 notes
+const int tonescaleWholeTone[]       = {60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, -1}; // Whole tone scale (harmonic combinations)
 
 const int kalimbaNotes_team1[] = { 60, 72, 64, 76, 67, 79, 60, 72, 64, 76, 67, 79, 60, 72, 64, 76, 81, 69, 60, 72, 64, 76, 81, 69, 60, 65, 77, 69, 81, 72, 60, 65, 77, 69, 81, 72, 74, 62, 77, 65, 81, 69, 74, 62, 77, 65, 81, 69 , -1};
 const int kalimbaNotes_team2[] = { 60, 72, 64, 69, 67, 65, 71, 62, 67, 65, 64, 69, 60, 72, 64, 69, 67, 65, 71, 62, 67, 65, 64, 69, 60, 76, 64, 72, 67, 69, 74, 65, 71, 69, 67, 72, 60, 76, 64, 72, 67, 69, 74, 65, 71, 69, 67, 72 , -1 };
 const int kalimbaNotes_canon1[] = { 53, 55, 57, 53, 53, 55, 57, 53, 57, 58, 60, 57, 58, 60, 60, 62, 60, 58, 57, 53, 60, 62, 60, 58, 57, 53, 55, 48, 53, 55, 48, 53, -1 };
+
+struct TonescaleStruct {
+    const char* name;
+    const int* tonescale;
+    int mode;
+};
+
+const TonescaleStruct tonescales[] = {
+    {"Pentatonic Major", tonescalePentatonicMajor, MODE_RANDOM},
+    {"Whole Tone", tonescaleWholeTone, MODE_RANDOM},
+    {"Kalimba Team 1", kalimbaNotes_team1, MODE_TEAM},
+    {"Kalimba Team 2", kalimbaNotes_team2, MODE_TEAM},
+    {"Kalimba Canon 1", kalimbaNotes_canon1, MODE_CANON}
+};
+
+int numTonescales = sizeof(tonescales) / sizeof(tonescales[0]);
 
 // Color palettes define the gradient of colors used for the wave effects
 // Each entry has the format: position (0-255), R, G, B
