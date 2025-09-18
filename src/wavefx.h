@@ -49,8 +49,10 @@
 #define NEOPIXEL_PIN 8      // First data pin for the LED stripes
 #define POTI_GND_PIN 25       // ground pin for potentiometers
 
-#define MODE_POTI_PIN       A10   // mode selection potentiometer signal pin
-#define VOLUME_POTI_PIN     A12   // volume potentiometer signal pin
+#define MODE_PIN            26   // mode selection potentiometer signal pin
+#define MODE_GND_PIN        27 
+
+#define VOLUME_POTI_PIN     A10   // volume potentiometer signal pin
 #define POTENTIOMETER_NOISE_THRESHOLD 8  // Minimum change in potentiometer value to consider it a valid change
 #define POTENTIOMETER_UPDATE_PERIOD 10   // Time in milliseconds between potentiometer reads
 #define POTENTIOMENTER_UI_UPDATE_PERIOD 100  // Time in milliseconds between UI updates based on potentiometer changes
@@ -63,10 +65,7 @@
 
 #define BIGWAVE_MIDINOTE_DURATION 5000 // Duration in milliseconds for big wave effect (fixed duration)
 #define USER_ACTIVITY_TIMEOUT 10000 // Time in milliseconds to consider user inactive
-
-#define AUTO_PLAY_TONESCALE_CHANGE_INTERVAL 120 // Time in milliseconds for notes in a tone scale preview
-#define MIDI_CHANNEL_FOR_PREVIEW 3 // MIDI channel for automatic tonescale preview notes
-#define AUTO_PLAY_PREVIEW_TONES 12 // Number of tones to play in the automatic preview
+#define CANON_INACTIVITY_TIMEOUT 2000 // Time in milliseconds for canon reset
 
 // Important: super sampling consumes more RAM and CPU! (2X or 4X result in out-of-memory crashes if full 40x50 matrix is used!!
 #define SUPER_SAMPLE_MODE SuperSample::SUPER_SAMPLE_NONE;  // SUPER_SAMPLE_2X or SUPER_SAMPLE_4X to create smoother waves

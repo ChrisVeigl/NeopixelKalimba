@@ -62,9 +62,6 @@ uint32_t lastUserActivity=0;  // Timestamp of the last user interaction (button 
 int idleAnimNote = 0;  // MIDI note for idle animation, will be set later based on player tone scale
 
 int tonescaleSelection = 0;  // Currently selected tonescale / mode
-const int * autoPlayTonescale = nullptr;  // Pointer to the current tone scale for automatic mode
-int autoPlayTimestamp = 0;  // Timestamp for the last automatic tone scale change
-int autoPlayPos = 0;      // Current Y position for automatic mode
 int teamToneProgress = 0; // Progress through the tone scale for team mode
 
 Averager avgVolumePoti(25);  // Averagers for smoothing volume potentiometer readings
@@ -127,6 +124,22 @@ void playIdleAnimation() {
     static uint32_t lastUpdateTime = 0;  // Timestamp of the last update
 
     #ifdef USE_RED_GREEN_IDLE_ANIMATION
+    /*
+        static int strobo=0;
+        if (millis() - lastUpdateTime > 100) {  // Update every 10 ms
+            lastUpdateTime = millis();  // Update the timestamp
+            strobo=!strobo;
+            if (strobo) {
+                for (int xPos=0;xPos<WIDTH*NUMBER_OF_PLAYERS;xPos++)
+                    for (int yPos=0;yPos<HEIGHT;yPos++)
+                        leds[xyMap(xPos, yPos)] = CRGB(255, 255, 255);
+            } else {
+                for (int xPos=0;xPos<WIDTH*NUMBER_OF_PLAYERS;xPos++)
+                    for (int yPos=0;yPos<HEIGHT;yPos++)
+                        leds[xyMap(xPos, yPos)] = CRGB(0,0,0);
+            }
+        }
+*/
         static int xPos=0, yPos=0;
         static uint8_t red = 255, green = 0;  // RGB color components
         if (millis() - lastUpdateTime > 10) {  // Update every 10 ms
@@ -267,8 +280,10 @@ void applyBigWave(uint32_t now, PlayerData * player) {
 
 void processPlayers(uint32_t now,PlayerData * player) {
     static int verticalPosition=0, horizontalPosition=0;
-    static int triggerYValue=0, triggerXValue=0;
+    static int triggerYValue=0;
     int trigger1State=HIGH, trigger2State=HIGH;
+
+    int xOffset = player->playerId * WIDTH;
 
     // handle trigger1 
 
@@ -280,8 +295,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger1Timestamp = now;  // remember the timestamp for trigger1
         player->trigger1Active = 1;
-        triggerXValue = random (0,1023);
-        horizontalPosition = (int)map (triggerXValue, 1023, 0, 2, WIDTH );
+        horizontalPosition = WIDTH/2;
 
         switch (tonescales[tonescaleSelection].mode)
         {
@@ -312,6 +326,15 @@ void processPlayers(uint32_t now,PlayerData * player) {
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
+        for (int i=0;i<WIDTH;i++) { 
+            player->waveLower.setf(xOffset+i, PLAYER_MAX_YPOS+10, 1.0);  // Create ripple in lower layer
+            player->waveUpper.setf(xOffset+i, PLAYER_MAX_YPOS+10, 1.0);  // Create ripple in upper layer
+        }
+        for (int i=0;i<NUMBER_OF_PLAYERS;i++) { 
+            bigWaveLower.addf(i*WIDTH+WIDTH/2, HEIGHT-10, 0.05);
+            bigWaveUpper.addf(i*WIDTH+WIDTH/2, HEIGHT-10, 0.05);
+        }
+
         Serial.printf("Player %d trigger1 wave at position %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger1Note);
         usbMIDI.sendNoteOn(player->trigger1Note, MIDINOTE_VELOCITY, player->midiChannel);    
     }   
@@ -334,8 +357,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         lastUserActivity = now;  // Update the last user activity timestamp
         player->trigger2Timestamp = now;  // remember the timestamp for trigger2
         player->trigger2Active = 1;
-        triggerXValue = random (0,1023);
-        horizontalPosition = (int)map (triggerXValue, 1023, 0, 2, WIDTH );
+        horizontalPosition = WIDTH/2;
 
         switch (tonescales[tonescaleSelection].mode)
         {
@@ -365,6 +387,15 @@ void processPlayers(uint32_t now,PlayerData * player) {
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_TRIGGER);
         triggerWave(horizontalPosition, verticalPosition, player);  // create a wave at the determined position
 
+        for (int i=0;i<WIDTH;i++) { 
+            player->waveLower.setf(xOffset+i, PLAYER_MAX_YPOS+10, 1.0);  // Create ripple in lower layer
+            player->waveUpper.setf(xOffset+i, PLAYER_MAX_YPOS+10, 1.0);  // Create ripple in upper layer
+        }
+        for (int i=0;i<NUMBER_OF_PLAYERS;i++) { 
+            bigWaveLower.addf(i*WIDTH+WIDTH/2, HEIGHT-10, 0.05);
+            bigWaveUpper.addf(i*WIDTH+WIDTH/2, HEIGHT-10, 0.05);
+        }
+            
         Serial.printf("Player %d trigger2 wave at position %d, mapped to note %d\n", player->playerId, verticalPosition, player->trigger2Note);
         usbMIDI.sendNoteOn(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel);  // MIDI channel = player id + 1
     }
@@ -375,6 +406,7 @@ void processPlayers(uint32_t now,PlayerData * player) {
         setWaveParameters(player->waveUpper, WAVE_SPEED_UPPER, WAVE_DAMPING_UPPER_RELEASE);
         usbMIDI.sendNoteOff(player->trigger2Note, MIDINOTE_VELOCITY, player->midiChannel);
     }
+
 }
 
 void processBigWaves(unsigned long now) {
@@ -420,15 +452,13 @@ void processBigWaves(unsigned long now) {
 
 void updatePotentiometers(unsigned long now) {
     static int potiUpdateTime = 0;   // Time taken for the last potentiometer update
-    // static int volume = 100;   // Current volume level (0-127)
-    // static int oldVolumeValue = -1;      // Previous volume potentiometer value for change detection
-    static int oldModeValue = -1;        // Previous mode potentiometer value for change detection
+    static int volume = 100;   // Current volume level (0-127)
+    static int oldVolumeValue = -1;      // Previous volume potentiometer value for change detection
 
     if (millis() - potiUpdateTime >= POTENTIOMETER_UPDATE_PERIOD) {
         potiUpdateTime = millis();  // Update last poti read time
 
-        // int volumeValue = avgVolumePoti.process(analogRead(VOLUME_POTI_PIN));
-        int modeValue = avgModePoti.process(analogRead(MODE_POTI_PIN));
+        int volumeValue = avgVolumePoti.process(analogRead(VOLUME_POTI_PIN));
 
         static int counter=0;
         counter += POTENTIOMETER_UPDATE_PERIOD;
@@ -436,75 +466,45 @@ void updatePotentiometers(unsigned long now) {
             counter=0;
 
             // volume control (is currently disabled)
-            /*    
             if (abs(volumeValue - oldVolumeValue) > 10) {
                 oldVolumeValue = volumeValue;
                 int act_volume = map (volumeValue, 0, 1023, 120, 0);  // Read volume from potentiometer
                 if (act_volume != volume) {
                     volume = act_volume;
                     Serial.printf(" Changing volume to %d\n", act_volume);
-                    for (int channel = 1; channel <= 8; channel++) {
-                        usbMIDI.sendControlChange(7, volume, channel);
-                    }
-                }
-            }
-                */
-
-            // mode / tonescale control
-            if (abs(modeValue - oldModeValue) > POTENTIOMETER_NOISE_THRESHOLD) {
-                oldModeValue = modeValue;
-                int act_tonescaleSelection = map (modeValue, 0, 1023, numTonescales-1, 0);  // Read mode from potentiometer
-                if (tonescaleSelection != act_tonescaleSelection) {
-                    tonescaleSelection = act_tonescaleSelection;
-                    Serial.printf(" Changing tonescale to %s\n", tonescales[tonescaleSelection].name);
-
-                    for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
-                        PlayerData * player = &playerArray[i];
-                        player->tonescale = tonescales[tonescaleSelection].tonescale;
-                        player->tonescaleSize = getTonescaleSize(player->tonescale);
-                        player->toneProgress = 0;
-                    }
-                    teamToneProgress = 0;
-                    autoPlayTonescale = tonescales[tonescaleSelection].tonescale;
-                    autoPlayTimestamp = now;
-                    autoPlayPos = 0;
-
-                    // update big wave mode
-                    if (tonescales[tonescaleSelection].mode == MODE_RANDOM) {
-                        bigWaveEnabled = true;
-                    } else {
-                        bigWaveEnabled = false;
-                    }   
+                    usbMIDI.sendControlChange(7, volume, 16);
                 }
             }
         }
     }
 }
 
+void updateMode (unsigned long now) {
+    static uint32_t lastModechangeTimestamp=0;
+    // mode / tonescale control
+    if ((digitalRead(MODE_PIN) == LOW) && (now - lastModechangeTimestamp > 2000)) {
+        lastModechangeTimestamp=now;
+        tonescaleSelection = ( tonescaleSelection + 1 ) % numTonescales;
+        Serial.printf(" Changing tonescale to %s\n", tonescales[tonescaleSelection].name);
 
-void handleAutoPlay(unsigned long now) {
-     // Play automatic tonescale preview if tonescale has been changed
-    if (autoPlayTonescale != nullptr && now - autoPlayTimestamp > AUTO_PLAY_TONESCALE_CHANGE_INTERVAL) {
-        autoPlayTimestamp = now;
-        static int lastAutoplayNote = 0;
-        if (lastAutoplayNote)
-            usbMIDI.sendNoteOff(lastAutoplayNote, MIDINOTE_VELOCITY, MIDI_CHANNEL_FOR_PREVIEW);  // in case note is still on, turn it off
+        for (int i = 0; i < NUMBER_OF_PLAYERS; i++) {
+            PlayerData * player = &playerArray[i];
+            player->tonescale = tonescales[tonescaleSelection].tonescale;
+            player->tonescaleSize = getTonescaleSize(player->tonescale);
+            player->toneProgress = 0;
+        }
+        teamToneProgress = 0;
+        usbMIDI.sendControlChange(11, tonescaleSelection, 16);
 
-        if ((*autoPlayTonescale >= 0) && (autoPlayPos < AUTO_PLAY_PREVIEW_TONES))  // If there are still notes in the scale or we haven't reached the bottom yet
-        {
-            int note = *autoPlayTonescale;
-            usbMIDI.sendNoteOn(note, MIDINOTE_VELOCITY, MIDI_CHANNEL_FOR_PREVIEW);  // Send preview notes on channel 3
-            lastAutoplayNote = note;
-            autoPlayTonescale++;
-            autoPlayPos++;
-        }
-        else { 
-            autoPlayTonescale = nullptr; 
-            lastAutoplayNote = 0;
-            autoPlayPos = 0;
-        }
+        // update big wave mode
+        if (tonescales[tonescaleSelection].mode == MODE_RANDOM) {
+            bigWaveEnabled = true;
+        } else {
+            bigWaveEnabled = false;
+        }   
     }
 }
+
 
 void handleIdleAnimation(unsigned long now) {
     // process idle animation
@@ -548,6 +548,10 @@ void wavefx_setup() {
     Serial.print("Initial Free Ram = "); Serial.println(freeram());
     pinMode (POTI_GND_PIN, OUTPUT);
     digitalWrite(POTI_GND_PIN, LOW);  // Set the ground pin for the potentiometer
+    pinMode (MODE_PIN, INPUT_PULLUP);
+    pinMode (MODE_GND_PIN, OUTPUT);
+    digitalWrite(MODE_GND_PIN, LOW);  // Set the ground pin for the mode button
+
 
     // Initialize the LED strip (setScreenMap connects our 2D coordinate system to the 1D LED array)
     // see: https://github.com/FastLED/FastLED/blob/master/examples/TeensyMassiveParallel/TeensyMassiveParallel.ino
@@ -660,9 +664,16 @@ void wavefx_loop() {
         processPlayers(now, &playerArray[i]);   
     
     updatePotentiometers(now);   // update potentiometers for user settings
-    handleAutoPlay(now);         // play automatic tonescale preview if tonescale has been changed
+    updateMode(now);
     handleIdleAnimation(now);    // handle / update idle animation
+
+
     if (bigWaveEnabled) processBigWaves(now); // process big waves if enabled
+    if ((now-lastUserActivity>CANON_INACTIVITY_TIMEOUT) && (tonescales[tonescaleSelection].mode) == MODE_CANON) {
+        for (int i=0;i<NUMBER_OF_PLAYERS;i++) {
+            playerArray[i].toneProgress=0;
+        }
+    }
 
     FastLED.show();              // send the color data to the actual LEDs
     monitorPerformance();
